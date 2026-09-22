@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../data/portfolio_data.dart';
-import '../theme/app_theme.dart';
+import '../theme/app_spacing.dart';
+import '../theme/app_text_styles.dart';
 import 'section_container.dart';
 
 /// Text-only hero/intro section: bold headline, subtext, and a plain
@@ -15,7 +16,10 @@ class HeroSection extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
 
     return SectionContainer(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 96),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.xl,
+        vertical: AppSpacing.hero,
+      ),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 600),
         child: Column(
@@ -26,7 +30,7 @@ class HeroSection extends StatelessWidget {
               PortfolioData.heroHeadline,
               style: textTheme.headlineMedium,
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: AppSpacing.xl),
             Text(
               PortfolioData.heroSubtext,
               style: textTheme.bodyLarge?.copyWith(
@@ -34,7 +38,7 @@ class HeroSection extends StatelessWidget {
                 height: 1.5,
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: AppSpacing.xl),
             InkWell(
               onTap: () => launchUrl(
                 Uri.parse(PortfolioData.mailtoUrl),
@@ -42,11 +46,7 @@ class HeroSection extends StatelessWidget {
               ),
               child: Text(
                 PortfolioData.email,
-                style: const TextStyle(
-                  color: AppColors.accent,
-                  decoration: TextDecoration.underline,
-                  fontWeight: FontWeight.w600,
-                ),
+                style: AppTextStyles.emailCta,
               ),
             ),
           ],

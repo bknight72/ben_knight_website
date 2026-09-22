@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../data/portfolio_data.dart';
+import '../theme/app_spacing.dart';
+import '../theme/app_text_styles.dart';
 import '../theme/app_theme.dart';
 
 /// Identifies a scrollable section that the nav can jump to.
@@ -49,10 +51,10 @@ class NavBar extends StatelessWidget implements PreferredSizeWidget {
 
     return AppBar(
       automaticallyImplyLeading: false,
-      titleSpacing: 24,
+      titleSpacing: AppSpacing.xl,
       title: Text(
         PortfolioData.name,
-        style: const TextStyle(fontWeight: FontWeight.w900),
+        style: AppTextStyles.navBrand,
       ),
       actions: wide
           ? [
@@ -64,11 +66,11 @@ class NavBar extends StatelessWidget implements PreferredSizeWidget {
                     style: const TextStyle(color: AppColors.text),
                   ),
                 ),
-              const SizedBox(width: 8),
+              const SizedBox(width: AppSpacing.sm),
               const _SocialIconRow(),
-              const SizedBox(width: 8),
+              const SizedBox(width: AppSpacing.sm),
               Padding(
-                padding: const EdgeInsets.only(right: 24),
+                padding: const EdgeInsets.only(right: AppSpacing.xl),
                 child: ElevatedButton(
                   onPressed: () => _launchUrl(PortfolioData.mailtoUrl),
                   child: const Text('Hire Me'),
@@ -83,7 +85,7 @@ class NavBar extends StatelessWidget implements PreferredSizeWidget {
                   onPressed: () => Scaffold.of(context).openDrawer(),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: AppSpacing.sm),
             ],
     );
   }
@@ -98,15 +100,12 @@ class NavBar extends StatelessWidget implements PreferredSizeWidget {
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
-            const DrawerHeader(
+            DrawerHeader(
               child: Align(
                 alignment: Alignment.bottomLeft,
                 child: Text(
                   PortfolioData.name,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 22,
-                  ),
+                  style: AppTextStyles.navBrand.copyWith(fontSize: 22),
                 ),
               ),
             ),
@@ -133,7 +132,7 @@ class NavBar extends StatelessWidget implements PreferredSizeWidget {
             ),
             const Divider(),
             Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(AppSpacing.lg),
               child: ElevatedButton(
                 onPressed: () => _launchUrl(PortfolioData.mailtoUrl),
                 child: const Text('Hire Me'),

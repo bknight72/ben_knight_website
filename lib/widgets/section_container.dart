@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_spacing.dart';
 import '../theme/app_theme.dart';
 
 /// Shared padding/max-width wrapper used by every section so content lines
@@ -13,7 +14,10 @@ class SectionContainer extends StatelessWidget {
     super.key,
     required this.child,
     this.backgroundColor,
-    this.padding = const EdgeInsets.symmetric(horizontal: 24, vertical: 64),
+    this.padding = const EdgeInsets.symmetric(
+      horizontal: AppSpacing.xl,
+      vertical: AppSpacing.huge,
+    ),
   });
 
   @override

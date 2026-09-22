@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../models/project.dart';
+import '../theme/app_shape_theme.dart';
+import '../theme/app_spacing.dart';
+import '../theme/app_text_styles.dart';
 import 'project_detail_dialog.dart';
 
 /// A single project tile in the "Featured Work" grid. Tapping opens a
@@ -21,7 +24,7 @@ class ProjectCard extends StatelessWidget {
         height: 320,
         decoration: BoxDecoration(
           color: project.placeholderColor,
-          border: Border.all(color: Colors.black12),
+          border: Theme.of(context).extension<AppShapeTheme>()!.cardBorder,
         ),
         child: Stack(
           children: [
@@ -33,27 +36,20 @@ class ProjectCard extends StatelessWidget {
               ),
             ),
             Positioned(
-              left: 16,
-              bottom: 16,
-              right: 16,
+              left: AppSpacing.lg,
+              bottom: AppSpacing.lg,
+              right: AppSpacing.lg,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
                     project.title,
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w900,
-                    ),
+                    style: AppTextStyles.cardTitle,
                   ),
                   Text(
                     project.company,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.black54,
-                    ),
+                    style: AppTextStyles.cardSubtitle,
                   ),
                 ],
               ),

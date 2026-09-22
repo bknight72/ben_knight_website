@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/portfolio_data.dart';
+import '../theme/app_spacing.dart';
 import '../theme/app_theme.dart';
 import 'section_container.dart';
 
@@ -18,10 +19,10 @@ class SkillsSection extends StatelessWidget {
             'Skills.',
             style: Theme.of(context).textTheme.headlineSmall,
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: AppSpacing.xxxl),
           Wrap(
-            spacing: 12,
-            runSpacing: 12,
+            spacing: AppSpacing.md,
+            runSpacing: AppSpacing.md,
             children: [
               for (final skill in PortfolioData.skills)
                 Chip(

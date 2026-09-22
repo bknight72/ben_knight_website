@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../data/portfolio_data.dart';
+import '../theme/app_spacing.dart';
+import '../theme/app_text_styles.dart';
 import 'section_container.dart';
 
 /// "Experience." section: vertical list of role/company/date cards, each
@@ -18,46 +20,36 @@ class ExperienceSection extends StatelessWidget {
             'Experience.',
             style: Theme.of(context).textTheme.headlineSmall,
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: AppSpacing.xxxl),
           for (final entry in PortfolioData.experience)
             Padding(
-              padding: const EdgeInsets.only(bottom: 28),
+              padding: const EdgeInsets.only(bottom: AppSpacing.xxl),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Wrap(
                     crossAxisAlignment: WrapCrossAlignment.center,
-                    spacing: 12,
+                    spacing: AppSpacing.md,
                     children: [
                       Text(
                         entry.role,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
-                        ),
+                        style: AppTextStyles.experienceRole,
                       ),
                       Text(
                         '· ${entry.company}',
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.black54,
-                        ),
+                        style: AppTextStyles.experienceMeta,
                       ),
                     ],
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: AppSpacing.xxs),
                   Text(
                     entry.dateRange,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Colors.black45,
-                    ),
+                    style: AppTextStyles.experienceDate,
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.sm),
                   for (final bullet in entry.bullets)
                     Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
+                      padding: const EdgeInsets.only(bottom: AppSpacing.xs),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [

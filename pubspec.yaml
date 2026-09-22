@@ -40,6 +40,9 @@ dependencies:
   # section buttons.
   url_launcher: ^6.3.1
 
+  # Used to apply the DM Mono Google Font across the app's TextTheme.
+  google_fonts: ^8.2.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

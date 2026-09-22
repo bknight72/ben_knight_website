@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../data/portfolio_data.dart';
+import '../theme/app_spacing.dart';
+import '../theme/app_text_styles.dart';
 import '../theme/app_theme.dart';
 import 'section_container.dart';
 
@@ -19,7 +21,7 @@ class AboutSection extends StatelessWidget {
             'About.',
             style: Theme.of(context).textTheme.headlineSmall,
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: AppSpacing.xxxl),
           LayoutBuilder(
             builder: (context, constraints) {
               final wide = constraints.maxWidth >= kMobileBreakpoint;
@@ -36,16 +38,17 @@ class AboutSection extends StatelessWidget {
                   color: Colors.black38,
                 ),
               );
+              final bodyLarge = Theme.of(context).textTheme.bodyLarge;
               final text = Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   for (final paragraph in PortfolioData.aboutParagraphs)
                     Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.only(bottom: AppSpacing.md),
                       child: Text(
                         paragraph,
-                        style: const TextStyle(height: 1.5),
+                        style: AppTextStyles.relaxed(bodyLarge),
                       ),
                     ),
                 ],
@@ -56,7 +59,7 @@ class AboutSection extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     avatar,
-                    const SizedBox(width: 32),
+                    const SizedBox(width: AppSpacing.xxxl),
                     Expanded(child: text),
                   ],
                 );
@@ -66,7 +69,7 @@ class AboutSection extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Center(child: avatar),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: AppSpacing.xl),
                   text,
                 ],
               );

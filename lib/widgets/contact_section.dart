@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../data/portfolio_data.dart';
+import '../theme/app_spacing.dart';
 import 'section_container.dart';
 
 /// "Contact." section: short prompt, prominent hire-me/email button, and
@@ -22,15 +23,15 @@ class ContactSection extends StatelessWidget {
             'Contact.',
             style: Theme.of(context).textTheme.headlineSmall,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.lg),
           Text(
             PortfolioData.contactPrompt,
-            style: const TextStyle(fontSize: 16),
+            style: Theme.of(context).textTheme.bodyLarge,
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: AppSpacing.xl),
           Wrap(
-            spacing: 16,
-            runSpacing: 16,
+            spacing: AppSpacing.lg,
+            runSpacing: AppSpacing.lg,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               ElevatedButton.icon(

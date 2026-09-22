@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/portfolio_data.dart';
+import '../theme/app_spacing.dart';
 import '../theme/app_theme.dart';
 import 'project_card.dart';
 import 'section_container.dart';
@@ -20,12 +21,12 @@ class FeaturedWorkSection extends StatelessWidget {
             'Featured Work.',
             style: Theme.of(context).textTheme.headlineSmall,
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: AppSpacing.xxxl),
           LayoutBuilder(
             builder: (context, constraints) {
               final wide = constraints.maxWidth >= kMobileBreakpoint;
               final columns = wide ? 3 : 1;
-              const spacing = 24.0;
+              const spacing = AppSpacing.xl;
               final itemWidth =
                   (constraints.maxWidth - spacing * (columns - 1)) / columns;
 

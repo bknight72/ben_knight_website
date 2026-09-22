@@ -1,16 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
-/// Shared color and layout constants approximating the reference site's
-/// palette (white background, black text, teal accent, dark green footer).
-class AppColors {
-  AppColors._();
+import 'app_colors.dart';
+import 'app_shape_theme.dart';
+import 'app_spacing.dart';
 
-  static const Color background = Colors.white;
-  static const Color text = Colors.black;
-  static const Color accent = Color(0xFF42776A);
-  static const Color darkAccent = Color(0xFF274740);
-  static const Color placeholderTile = Color(0xFFEEEEEE);
-}
+export 'app_colors.dart';
 
 /// Layout breakpoint below which the nav switches from inline links to a
 /// hamburger + [Drawer]. Matches the reference site's Bootstrap
@@ -34,6 +29,12 @@ class AppTheme {
       scaffoldBackgroundColor: AppColors.background,
     );
 
+    // DM Mono only ships weights 300 (Light), 400 (Regular), and 500
+    // (Medium) — every heading below is capped at w500 instead of the
+    // w900/w700 used previously, since DM Mono has no bolder weight to
+    // request.
+    final monoTextTheme = GoogleFonts.dmMonoTextTheme(base.textTheme);
+
     return base.copyWith(
       appBarTheme: const AppBarTheme(
         backgroundColor: AppColors.background,
@@ -41,38 +42,42 @@ class AppTheme {
         elevation: 0,
         surfaceTintColor: Colors.transparent,
       ),
-      textTheme: base.textTheme.copyWith(
-        displaySmall: base.textTheme.displaySmall?.copyWith(
-          fontWeight: FontWeight.w900,
+      textTheme: monoTextTheme.copyWith(
+        displaySmall: monoTextTheme.displaySmall?.copyWith(
+          fontWeight: FontWeight.w500,
           color: AppColors.text,
         ),
-        headlineMedium: base.textTheme.headlineMedium?.copyWith(
-          fontWeight: FontWeight.w900,
+        headlineMedium: monoTextTheme.headlineMedium?.copyWith(
+          fontWeight: FontWeight.w500,
           color: AppColors.text,
         ),
-        headlineSmall: base.textTheme.headlineSmall?.copyWith(
-          fontWeight: FontWeight.w900,
+        headlineSmall: monoTextTheme.headlineSmall?.copyWith(
+          fontWeight: FontWeight.w500,
           color: AppColors.text,
         ),
-        titleLarge: base.textTheme.titleLarge?.copyWith(
-          fontWeight: FontWeight.w700,
+        titleLarge: monoTextTheme.titleLarge?.copyWith(
+          fontWeight: FontWeight.w500,
           color: AppColors.text,
         ),
-        bodyLarge: base.textTheme.bodyLarge?.copyWith(
+        bodyLarge: monoTextTheme.bodyLarge?.copyWith(
           color: AppColors.text,
         ),
-        bodyMedium: base.textTheme.bodyMedium?.copyWith(
+        bodyMedium: monoTextTheme.bodyMedium?.copyWith(
           color: AppColors.text,
         ),
       ),
+      extensions: const [AppShapeTheme.standard],
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.accent,
           foregroundColor: Colors.white,
-          shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.zero,
+          shape: RoundedRectangleBorder(
+            borderRadius: AppShapeTheme.standard.buttonRadius,
           ),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.xl,
+            vertical: 14,
+          ),
         ),
       ),
     );

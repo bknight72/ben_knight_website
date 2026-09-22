@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../data/portfolio_data.dart';
+import '../theme/app_spacing.dart';
+import '../theme/app_text_styles.dart';
 import '../theme/app_theme.dart';
 import 'section_container.dart';
 
@@ -17,7 +19,10 @@ class FooterSection extends StatelessWidget {
   Widget build(BuildContext context) {
     return SectionContainer(
       backgroundColor: AppColors.darkAccent,
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.xl,
+        vertical: AppSpacing.xxxl,
+      ),
       child: Column(
         children: [
           Row(
@@ -40,11 +45,11 @@ class FooterSection extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppSpacing.sm),
           Text(
             PortfolioData.footerText,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
+            style: AppTextStyles.footerCaption,
           ),
         ],
       ),

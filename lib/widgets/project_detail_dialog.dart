@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../models/project.dart';
+import '../theme/app_spacing.dart';
+import '../theme/app_text_styles.dart';
 
 /// Detail modal shown when a [ProjectCard] is tapped: larger placeholder
 /// image, title, company, and full description — mirrors the reference
@@ -16,7 +18,7 @@ class ProjectDetailDialog extends StatelessWidget {
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(AppSpacing.xl),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -41,24 +43,18 @@ class ProjectDetailDialog extends StatelessWidget {
                   ),
                 ),
               ),
+              // 20px gap: one-off, not part of the shared AppSpacing scale.
               const SizedBox(height: 20),
               Text(
                 project.title,
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w900,
-                ),
+                style: AppTextStyles.cardTitle,
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: AppSpacing.xs),
               Text(
                 project.company,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.black54,
-                ),
+                style: AppTextStyles.cardSubtitle,
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.lg),
               Text(project.description),
             ],
           ),
