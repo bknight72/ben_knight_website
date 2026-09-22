@@ -16,6 +16,11 @@ const double kMobileBreakpoint = 992.0;
 /// Bootstrap container max-width.
 const double kMaxContentWidth = 1200.0;
 
+/// Width below which the Hero ASCII-art wordmark switches from the wide
+/// single-row layout to the narrower stacked layout. Independent of
+/// [kMobileBreakpoint], which governs the nav bar's own collapse point.
+const double kHeroArtBreakpoint = 600.0;
+
 class AppTheme {
   AppTheme._();
 

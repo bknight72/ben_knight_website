@@ -4,6 +4,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:ben_knight_website2/main.dart';
+import 'package:ben_knight_website2/widgets/hero_ascii_art.dart';
 import 'package:ben_knight_website2/widgets/project_card.dart';
 
 void main() {
@@ -13,7 +14,7 @@ void main() {
     await tester.pumpWidget(const MyApp());
     await tester.pumpAndSettle();
 
-    expect(find.textContaining("Hey, I'm Ben"), findsOneWidget);
+    expect(find.byType(HeroAsciiArt), findsOneWidget);
     expect(find.text('Featured Work.'), findsOneWidget);
     expect(find.text('About.'), findsOneWidget);
     expect(find.text('Experience.'), findsOneWidget);
