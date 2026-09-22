@@ -1,11 +1,11 @@
 {
-    "name": "ben_knight_website2",
-    "short_name": "ben_knight_website2",
+    "name": "Ben Knight — Portfolio",
+    "short_name": "Ben Knight",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "ben knight web site",
+    "background_color": "#FFFFFF",
+    "theme_color": "#42776A",
+    "description": "Placeholder portfolio site for Ben Knight",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
