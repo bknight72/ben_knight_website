@@ -1,13 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../widgets/about_section.dart';
-import '../widgets/contact_section.dart';
-import '../widgets/experience_section.dart';
 import '../widgets/featured_work_section.dart';
 import '../widgets/footer_section.dart';
 import '../widgets/hero_section.dart';
 import '../widgets/nav_bar.dart';
-import '../widgets/skills_section.dart';
 
 /// Assembles the whole single-page portfolio: fixed nav, then a vertically
 /// scrolling column of sections. Owns the [GlobalKey]s used to scroll to
