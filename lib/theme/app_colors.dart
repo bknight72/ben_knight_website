@@ -8,6 +8,6 @@ class AppColors {
   static const Color background = Colors.white;
   static const Color text = Colors.black;
   static const Color accent = Color(0xFF42776A);
-  static const Color darkAccent = Color(0xFF274740);
+  static const Color darkAccent = Color(0xFF42776A);
   static const Color placeholderTile = Color(0xFFEEEEEE);
 }

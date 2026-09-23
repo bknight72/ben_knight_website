@@ -17,21 +17,20 @@ class PortfolioData {
       "Hey, I'm Ben — A Software\nEngineer from Placeholder City.";
 
   static const String heroSubtext =
-      "I've built [placeholder achievement one], contributed to "
-      "[placeholder achievement two], and am currently working on "
-      "[placeholder achievement three].";
+      "I'm a security-focused software developer from LA. \n\nI've built Alarm management & response platforms, contributed to browser-extension based red-teaming tools, and am currently working on an AI-powered parser for US drone manuals.";
 
-  static const String email = 'placeholder@example.com';
-  static const String githubUrl = 'https://github.com/placeholder';
-  static const String linkedinUrl = 'https://linkedin.com/in/placeholder';
-  static const String twitterUrl = 'https://twitter.com/placeholder';
+  static const String email = 'benknighty@gmail.com';
+  static const String githubUrl = 'https://github.com/bknight72';
+  static const String linkedinUrl =
+      'https://www.linkedin.com/in/ben-knight-b909231a8/';
+  static const String substackUrl = 'https://ben411.substack.com/';
 
   static String get mailtoUrl => 'mailto:$email';
 
   static const List<Project> projects = [
     Project(
-      title: 'Placeholder Project One',
-      company: 'Placeholder Company A',
+      title: 'NIAR',
+      company: 'Novacoast',
       description:
           'A short placeholder description of project one — what it does, '
           'the problem it solves, and the impact it had. Replace with real '
@@ -40,8 +39,8 @@ class PortfolioData {
       placeholderColor: AppPlaceholderColors.tileOne,
     ),
     Project(
-      title: 'Placeholder Project Two',
-      company: 'Placeholder Company B',
+      title: 'Nori',
+      company: 'Novacoast',
       description:
           'A short placeholder description of project two — what it does, '
           'the problem it solves, and the impact it had. Replace with real '
@@ -51,7 +50,27 @@ class PortfolioData {
     ),
     Project(
       title: 'Placeholder Project Three',
-      company: 'Placeholder Company C',
+      company: 'Novacoast',
+      description:
+          'A short placeholder description of project three — what it does, '
+          'the problem it solves, and the impact it had. Replace with real '
+          'project details.',
+      placeholderIcon: Icons.image_outlined,
+      placeholderColor: AppPlaceholderColors.tileThree,
+    ),
+    Project(
+      title: 'Placeholder Project Three',
+      company: 'Just for me',
+      description:
+          'A short placeholder description of project three — what it does, '
+          'the problem it solves, and the impact it had. Replace with real '
+          'project details.',
+      placeholderIcon: Icons.image_outlined,
+      placeholderColor: AppPlaceholderColors.tileThree,
+    ),
+    Project(
+      title: 'Keyless Entry',
+      company: 'Brigham Young University',
       description:
           'A short placeholder description of project three — what it does, '
           'the problem it solves, and the impact it had. Replace with real '
@@ -62,10 +81,17 @@ class PortfolioData {
   ];
 
   static const List<String> aboutParagraphs = [
-    'Placeholder about-me paragraph one. Talk about your background, what '
-        'got you into software engineering, and what drives you.',
-    'Placeholder about-me paragraph two. Mention placeholder interests, '
-        'placeholder hobbies, or placeholder values relevant to your work.',
+    'I\'ve been interested in software and digital creation since my mom first bought me a'
+        ' Game Boy Advanced. This love of transistor computation led me to learn software development'
+        ' formally in university and I\'ve never looked back since. To me, the beauty of'
+        ' programs can be found in their thoughtful design and that drives me to continue my learning'
+        ' beyond schooling. As the frontier of the information era stretches'
+        ' forward towards dark and cavenous possibilities, our understanding will be a'
+        ' singular source of blazing light. ',
+    'Out of the office, if I\'m not out walking my small dog, Bungo, you can catch me grabbing a drink with'
+        ' friends, out camping, or watching some spectacular baseball. I\'m also a writer, which you should be able to tell from'
+        ' the amount of commas I used in that last sentence. ',
+    'If you want to talk to me about anything, go ahead and send me an email at benknighty@gmail.com',
   ];
 
   static const List<ExperienceEntry> experience = [
@@ -115,9 +141,7 @@ class PortfolioData {
   static const String contactPrompt =
       "Have a placeholder opportunity in mind? I'd love to hear about it.";
 
-  static const String footerText =
-      '© 2026 Ben Knight. Built with Flutter. '
-      'Placeholder content — replace before publishing.';
+  static const String footerText = '© 2026 Ben Knight. Built with Flutter.';
 }
 
 /// Distinct placeholder tile colors used for project cards so cards are

@@ -19,13 +19,13 @@ class FeaturedWorkSection extends StatelessWidget {
         children: [
           Text(
             'Featured Work.',
-            style: Theme.of(context).textTheme.headlineSmall,
+            style: TextStyle(fontSize: 30, fontWeight: FontWeight(900)),
           ),
           const SizedBox(height: AppSpacing.xxxl),
           LayoutBuilder(
             builder: (context, constraints) {
               final wide = constraints.maxWidth >= kMobileBreakpoint;
-              final columns = wide ? 3 : 1;
+              final columns = wide ? 2 : 1;
               const spacing = AppSpacing.xl;
               final itemWidth =
                   (constraints.maxWidth - spacing * (columns - 1)) / columns;

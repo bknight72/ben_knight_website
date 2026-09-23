@@ -53,29 +53,31 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final navBar = NavBar(onSectionTap: _scrollToSection);
     return Scaffold(
-      appBar: NavBar(onSectionTap: _scrollToSection),
-      drawer: NavBar.buildDrawer(onSectionTap: (section) {
-        Navigator.of(context).pop();
-        // Wait for the drawer's close animation before scrolling so
-        // ensureVisible measures the final (unobscured) layout.
-        Future.delayed(
-          const Duration(milliseconds: 250),
-          () => _scrollToSection(section),
-        );
-      }),
+      extendBodyBehindAppBar: true,
+      appBar: navBar,
+      drawer: NavBar(
+          onSectionTap: (section) {
+            Navigator.of(context).pop();
+            // Wait for the drawer's close animation before scrolling so
+            // ensureVisible measures the final (unobscured) layout.
+            Future.delayed(
+              const Duration(milliseconds: 250),
+              () => _scrollToSection(section),
+            );
+          },
+          showAsDrawer: true),
       body: SingleChildScrollView(
         child: Column(
           children: [
+            SizedBox(
+              height: MediaQuery.paddingOf(context).top +
+                  navBar.preferredSize.height,
+            ),
             const HeroSection(),
             KeyedSubtree(key: _workKey, child: const FeaturedWorkSection()),
             KeyedSubtree(key: _aboutKey, child: const AboutSection()),
-            KeyedSubtree(
-              key: _experienceKey,
-              child: const ExperienceSection(),
-            ),
-            KeyedSubtree(key: _skillsKey, child: const SkillsSection()),
-            KeyedSubtree(key: _contactKey, child: const ContactSection()),
             const FooterSection(),
           ],
         ),

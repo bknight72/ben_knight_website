@@ -60,6 +60,33 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  assets:
+    - web/assets/images/benoutdoors.jpg
+
+  fonts:
+    - family: CircularStd
+      fonts:
+        - asset: web/assets/fonts/CircularStd-Book.ttf
+          weight: 400
+        - asset: web/assets/fonts/CircularStd-BookItalic.ttf
+          weight: 400
+          style: italic
+        - asset: web/assets/fonts/CircularStd-Medium.ttf
+          weight: 500
+        - asset: web/assets/fonts/CircularStd-MediumItalic.ttf
+          weight: 500
+          style: italic
+        - asset: web/assets/fonts/CircularStd-Bold.ttf
+          weight: 700
+        - asset: web/assets/fonts/CircularStd-BoldItalic.ttf
+          weight: 700
+          style: italic
+        - asset: web/assets/fonts/CircularStd-Black.ttf
+          weight: 900
+        - asset: web/assets/fonts/CircularStd-BlackItalic.ttf
+          weight: 900
+          style: italic
+
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

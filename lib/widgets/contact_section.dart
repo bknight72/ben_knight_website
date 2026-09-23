@@ -37,7 +37,7 @@ class ContactSection extends StatelessWidget {
               ElevatedButton.icon(
                 onPressed: () => _launch(PortfolioData.mailtoUrl),
                 icon: const Icon(Icons.email_outlined),
-                label: const Text('Hire Me'),
+                label: const Text('hire me'),
               ),
               IconButton(
                 icon: const Icon(Icons.code),
@@ -51,8 +51,8 @@ class ContactSection extends StatelessWidget {
               ),
               IconButton(
                 icon: const Icon(Icons.alternate_email),
-                tooltip: 'Twitter (placeholder)',
-                onPressed: () => _launch(PortfolioData.twitterUrl),
+                tooltip: 'Substack (placeholder)',
+                onPressed: () => _launch(PortfolioData.substackUrl),
               ),
             ],
           ),

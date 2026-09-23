@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../data/portfolio_data.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
 import '../theme/app_theme.dart';
+import 'nav_wave.dart';
 import 'section_container.dart';
 
 /// Dark footer with repeated social links and copyright/placeholder notice.
@@ -12,46 +12,29 @@ import 'section_container.dart';
 class FooterSection extends StatelessWidget {
   const FooterSection({super.key});
 
-  Future<void> _launch(String url) =>
-      launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-
   @override
   Widget build(BuildContext context) {
-    return SectionContainer(
-      backgroundColor: AppColors.darkAccent,
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.xl,
-        vertical: AppSpacing.xxxl,
-      ),
-      child: Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+    return ClipPath(
+      clipper: const NavWaveClipper(topEdge: true),
+      child: CustomPaint(
+        foregroundPainter: const NavWavePainter(topEdge: true),
+        child: SectionContainer(
+          backgroundColor: AppColors.darkAccent,
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.xl,
+            vertical: AppSpacing.xxxl,
+          ),
+          child: Column(
             children: [
-              IconButton(
-                icon: const Icon(Icons.code, color: Colors.white),
-                tooltip: 'GitHub (placeholder)',
-                onPressed: () => _launch(PortfolioData.githubUrl),
-              ),
-              IconButton(
-                icon: const Icon(Icons.business_center, color: Colors.white),
-                tooltip: 'LinkedIn (placeholder)',
-                onPressed: () => _launch(PortfolioData.linkedinUrl),
-              ),
-              IconButton(
-                icon: const Icon(Icons.alternate_email, color: Colors.white),
-                tooltip: 'Twitter (placeholder)',
-                onPressed: () => _launch(PortfolioData.twitterUrl),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                PortfolioData.footerText,
+                textAlign: TextAlign.center,
+                style: AppTextStyles.footerCaption,
               ),
             ],
           ),
-          const SizedBox(height: AppSpacing.sm),
-          Text(
-            PortfolioData.footerText,
-            textAlign: TextAlign.center,
-            style: AppTextStyles.footerCaption,
-          ),
-        ],
+        ),
       ),
     );
   }
