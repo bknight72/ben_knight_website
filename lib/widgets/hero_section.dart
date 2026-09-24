@@ -42,13 +42,15 @@ class _HeroSectionState extends State<HeroSection> {
               constraints: const BoxConstraints(maxWidth: kMaxContentWidth / 2),
               child: Text(
                 PortfolioData.heroSubtext,
-                textAlign: TextAlign.justify,
-                style:
-                    const TextStyle(fontSize: 20, fontWeight: FontWeight(400)),
+                style: const TextStyle(
+                  fontSize: 18,
+                  height: 1.6,
+                  fontWeight: FontWeight(400),
+                ),
               ),
             ),
           ),
-          const SizedBox(height: AppSpacing.xxl),
+          const SizedBox(height: AppSpacing.lg),
           Padding(
             padding: const EdgeInsets.only(left: 4),
             child: AnimatedContainer(

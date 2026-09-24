@@ -4,7 +4,7 @@ import '../models/project.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
 
-/// Detail modal shown when a [ProjectCard] is tapped: larger placeholder
+/// Detail modal shown when a [ProjectCard] is tapped: larger project
 /// image, title, company, and full description — mirrors the reference
 /// site's project modal.
 class ProjectDetailDialog extends StatelessWidget {
@@ -31,17 +31,10 @@ class ProjectDetailDialog extends StatelessWidget {
                   onPressed: () => Navigator.of(context).pop(),
                 ),
               ),
-              Container(
+              SizedBox(
                 height: 220,
                 width: double.infinity,
-                color: project.placeholderColor,
-                child: Center(
-                  child: Icon(
-                    project.placeholderIcon,
-                    size: 64,
-                    color: Colors.black38,
-                  ),
-                ),
+                child: Image.asset(project.imagePath, fit: BoxFit.cover),
               ),
               // 20px gap: one-off, not part of the shared AppSpacing scale.
               const SizedBox(height: 20),

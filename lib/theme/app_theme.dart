@@ -7,7 +7,7 @@ import 'app_spacing.dart';
 export 'app_colors.dart';
 
 /// Layout breakpoint below which the nav switches from inline links to a
-/// hamburger + [Drawer]. Matches the reference site's Bootstrap
+/// hamburger + full-screen overlay. Matches the reference site's Bootstrap
 /// `navbar-expand-lg` collapse breakpoint (~992px).
 const double kMobileBreakpoint = 992.0;
 
@@ -18,7 +18,7 @@ const double kMaxContentWidth = 1200.0;
 /// Width below which the Hero ASCII-art wordmark switches from the wide
 /// single-row layout to the narrower stacked layout. Independent of
 /// [kMobileBreakpoint], which governs the nav bar's own collapse point.
-const double kHeroArtBreakpoint = 600.0;
+const double kHeroArtBreakpoint = 640.0;
 
 class AppTheme {
   AppTheme._();

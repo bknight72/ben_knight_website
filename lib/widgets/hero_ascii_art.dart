@@ -28,24 +28,29 @@ const List<String> _wideArt = [
 /// Narrower, stacked wordmark art shown below [kHeroArtBreakpoint]. The two
 /// blocks (top logo mark, bottom "Ben" word) are separated by a blank line.
 const List<String> _narrowArt = [
-  ',,                    gp                  ',
-  '`7MMF\'  `7MMF\'  db              `7MMF\'\\/                  ',
-  '  MM      MM                      MM  `\'                  ',
-  '  MM      MM  `7MM                MM    `7MMpMMMb.pMMMb.  ',
-  '  MMmmmmmmMM    MM                MM      MM    MM    MM  ',
-  '  MM      MM    MM                MM      MM    MM    MM  ',
-  '  MM      MM    MM       ,,       MM      MM    MM    MM  ',
-  '.JMML.  .JMML..JMML.     dg     .JMML.  .JMML  JMML  JMML.',
-  '                         ,j                               ',
-  '                        ,\'                                ',
-  '',
-  '`7MM"""Yp,                                                ',
-  '  MM    Yb                                                ',
-  '  MM    dP  .gP"Ya `7MMpMMMb.                             ',
-  '  MM"""bg. ,M\'   Yb  MM    MM                             ',
-  '  MM    `Y 8M""""""  MM    MM                             ',
-  '  MM    ,9 YM.    ,  MM    MM      ,,                     ',
-  '.JMMmmmd9   `Mbmmd\'.JMML  JMML.    db',
+  '..........................................................',
+  '..........................................................',
+  '...................,,..............gp.....................',
+  '..`7MMF\'..`7MMF\'...db.......`7MMF\'.\\/.....................',
+  '....MM......MM................MM...`\'.....................',
+  '....MM......MM...`7MM.........MM......`7MMpMMMb.pMMMb.....',
+  '....MMmmmmmmMM.....MM.........MM........MM....MM....MM....',
+  '....MM......MM.....MM.........MM........MM....MM....MM....',
+  '....MM......MM.....MM...,,....MM........MM....MM....MM....',
+  '...JMML....JMML...JMML..dg...JMML......JMML..JMML..JMML...',
+  '........................,j................................',
+  '........................,\'................................',
+  '..........................................................',
+  '..........................................................',
+  '..`7MM"""Yp,..............................................',
+  '....MM....Yb..............................................',
+  '....MM....dP....gP"Ya..`7MMpMMMb..........................',
+  '....MM"""bg...,M\'...Yb...MM....MM.........................',
+  '....MM....`Y..8M""""""...MM....MM.........................',
+  '....MM....,9..YM.....,...MM....MM.........................',
+  '...JMMmmmd9....`Mbmmd\'..JMML..JMML........................',
+  '..........................................................',
+  '..........................................................',
 ];
 
 /// Pool of glyphs used for the transient "scramble" state as each column of
@@ -58,13 +63,15 @@ const String _scramblePool =
 // this range before locking to its final glyph.
 const double _kMinScrambleMs = 200;
 const double _kMaxScrambleMs = 400;
+const double _kRowStartDelayMs = 75;
+const double _kCharacterStartDelayMs = 21;
 
 // Default cap on how many characters may be actively scrambling within a
 // single row at once, used when [HeroAsciiArt.maxConcurrentPerRow] isn't
 // overridden. A character only starts scrambling once a slot frees up —
 // i.e. once fewer than this many characters in that row are currently
 // scrambling.
-const int _kDefaultMaxConcurrentPerRow = 10;
+const int _kDefaultMaxConcurrentPerRow = 12;
 
 /// Precomputed per-row reveal timing for one art variant: for every cell,
 /// the millisecond (from animation start) at which it begins scrambling
@@ -78,9 +85,10 @@ class _RowSchedules {
   const _RowSchedules({required this.starts, required this.locks});
 }
 
-/// Animated ASCII-art wordmark for the Hero section. On first mount, reveals
-/// the art character-by-character within each row: at most
-/// [maxConcurrentPerRow] characters per row scramble through random glyphs
+/// Animated ASCII-art wordmark for the Hero section. On first mount, starts
+/// rows from top to bottom, then reveals characters left to right within each
+/// row: the initial characters ramp up one at a time, with at most
+/// [maxConcurrentPerRow] characters per row scrambling through random glyphs
 /// at once, each for its own randomly-chosen duration. As soon as one
 /// finishes and locks to its true character, the next character in that row
 /// claims the freed slot and starts scrambling. Because rows differ in
@@ -119,16 +127,17 @@ class _HeroAsciiArtState extends State<HeroAsciiArt>
   /// [HeroAsciiArt.maxConcurrentPerRow] concurrent scramble "slots": a
   /// character claims whichever slot frees up earliest, so it only starts
   /// once fewer than that many characters to its left (in the same row) are
-  /// still scrambling.
+  /// still scrambling. Each row's slots open in sequence after its stagger.
   _RowSchedules _generateSchedule(List<String> art) {
     final starts = <List<double>>[];
     final locks = <List<double>>[];
-    for (final line in art) {
+    for (var r = 0; r < art.length; r++) {
+      final line = art[r];
       final rowStarts = List<double>.filled(line.length, 0);
       final rowLocks = List<double>.filled(line.length, 0);
-      final slotFreeAt = List<double>.filled(
+      final slotFreeAt = List<double>.generate(
         widget.maxConcurrentPerRow,
-        0,
+        (slot) => r * _kRowStartDelayMs + slot * _kCharacterStartDelayMs,
       );
       for (var c = 0; c < line.length; c++) {
         if (line[c] == ' ') continue;
@@ -228,29 +237,36 @@ class _HeroAsciiArtState extends State<HeroAsciiArt>
     final wide = MediaQuery.of(context).size.width >= kHeroArtBreakpoint;
     final sourceArt = wide ? _wideArt : _narrowArt;
     final schedule = wide ? _wideSchedule : _narrowSchedule;
-    final fontSize = wide ? 19.0 : 18.0;
     final displayedLines = _buildDisplayedLines(sourceArt, schedule);
 
     final textStyle = GoogleFonts.jetBrainsMono(
-      fontSize: fontSize,
+      fontSize: wide ? 19.0 : 18.0,
       height: 1.0,
       fontWeight: FontWeight.w900,
       color: AppColors.accent,
+      fontFeatures: const [
+        FontFeature.disable('liga'),
+        FontFeature.disable('clig'),
+        FontFeature.disable('calt'),
+      ],
     );
 
     return Semantics(
       label: PortfolioData.heroHeadline,
       child: ExcludeSemantics(
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          physics: const ClampingScrollPhysics(),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              for (final line in displayedLines)
-                Text(line, style: textStyle, softWrap: false),
-            ],
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final line in displayedLines)
+                  Text(line, style: textStyle, softWrap: false),
+              ],
+            ),
           ),
         ),
       ),

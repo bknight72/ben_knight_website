@@ -18,5 +18,5 @@ class AppSpacing {
   static const double xxxl = 32;
   static const double xxxxl = 40;
   static const double huge = 64;
-  static const double hero = 140;
+  static const double hero = 120;
 }

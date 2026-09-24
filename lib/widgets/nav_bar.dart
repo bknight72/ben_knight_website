@@ -36,15 +36,15 @@ ButtonStyle _hireMeButtonStyle(BuildContext context) => TextButton.styleFrom(
           ),
     );
 
-/// Navigation UI for the page header and its compact-layout drawer.
+/// Navigation UI for the page header.
 class NavBar extends StatelessWidget implements PreferredSizeWidget {
   final void Function(NavSection section) onSectionTap;
-  final bool showAsDrawer;
+  final VoidCallback? onMenuTap;
 
   const NavBar({
     super.key,
     required this.onSectionTap,
-    this.showAsDrawer = false,
+    this.onMenuTap,
   });
 
   // Toolbar plus the wave beneath it.
@@ -56,8 +56,6 @@ class NavBar extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (showAsDrawer) return _buildDrawer();
-
     final wide = _isWide(context);
 
     return ClipPath(
@@ -73,7 +71,9 @@ class NavBar extends StatelessWidget implements PreferredSizeWidget {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 1200),
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
+              padding: EdgeInsets.symmetric(
+                horizontal: wide ? AppSpacing.xl : AppSpacing.xxxl,
+              ),
               child: Row(
                 children: [
                   Text(
@@ -86,12 +86,18 @@ class NavBar extends StatelessWidget implements PreferredSizeWidget {
                     const SizedBox(width: AppSpacing.lg),
                     const _HireMeButton(),
                   ] else
-                    Builder(
-                      builder: (context) => IconButton(
-                        icon: const Icon(Icons.menu),
-                        tooltip: 'Open navigation menu',
-                        onPressed: () => Scaffold.of(context).openDrawer(),
+                    IconButton(
+                      style:
+                          IconButton.styleFrom(overlayColor: AppColors.accent),
+                      icon: const SizedBox(
+                        width: 28,
+                        height: 28,
+                        child: CustomPaint(
+                          key: ValueKey('mobile-menu-open-icon'),
+                          painter: _MenuIconPainter(),
+                        ),
                       ),
+                      onPressed: onMenuTap,
                     ),
                 ],
               ),
@@ -110,53 +116,187 @@ class NavBar extends StatelessWidget implements PreferredSizeWidget {
       ),
     );
   }
+}
 
-  Widget _buildDrawer() {
-    return Drawer(
+class _MenuIconPainter extends CustomPainter {
+  const _MenuIconPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = AppColors.text
+      ..strokeWidth = 4
+      ..strokeCap = StrokeCap.round;
+    for (final y in [6.0, 14.0, 22.0]) {
+      canvas.drawLine(Offset(3, y), Offset(size.width - 3, y), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _MenuIconPainter oldDelegate) => false;
+}
+
+/// Full-screen mobile navigation, rendered above the page and header.
+class MobileNavOverlay extends StatelessWidget {
+  final VoidCallback onClose;
+
+  const MobileNavOverlay({super.key, required this.onClose});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.accent.withValues(alpha: 0.88),
       child: SafeArea(
-        child: ListView(
-          padding: EdgeInsets.zero,
+        child: Stack(
           children: [
-            DrawerHeader(
-              child: Align(
-                alignment: Alignment.bottomLeft,
-                child: Text(
-                  PortfolioData.name,
-                  style: AppTextStyles.navBrand.copyWith(fontSize: 22),
-                ),
-              ),
+            Positioned(
+              top: AppSpacing.md,
+              right: AppSpacing.xxxl,
+              child: _MobileCloseButton(onPressed: onClose),
             ),
-            ListTile(
-              title: const Text(
-                'github',
-                style: TextStyle(fontWeight: FontWeight.bold),
+            Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final (label, url) in [
+                    ('github', PortfolioData.githubUrl),
+                    ('linkedin', PortfolioData.linkedinUrl),
+                    ('substack', PortfolioData.substackUrl),
+                    ('email', PortfolioData.mailtoUrl),
+                  ])
+                    Padding(
+                      padding:
+                          const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+                      child: _MobileMenuLink(
+                        label: label,
+                        url: url,
+                        onClose: onClose,
+                      ),
+                    ),
+                ],
               ),
-              onTap: () => _launchUrl(PortfolioData.githubUrl),
-            ),
-            ListTile(
-              title: const Text(
-                'linkedin',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              onTap: () => _launchUrl(PortfolioData.linkedinUrl),
-            ),
-            ListTile(
-              title: const Text(
-                'substack',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              onTap: () => _launchUrl(PortfolioData.substackUrl),
-            ),
-            const Divider(),
-            Padding(
-              padding: const EdgeInsets.all(AppSpacing.lg),
-              child: const _HireMeButton(),
             ),
           ],
         ),
       ),
     );
   }
+}
+
+class _MobileMenuLink extends StatefulWidget {
+  final String label;
+  final String url;
+  final VoidCallback onClose;
+
+  const _MobileMenuLink({
+    required this.label,
+    required this.url,
+    required this.onClose,
+  });
+
+  @override
+  State<_MobileMenuLink> createState() => _MobileMenuLinkState();
+}
+
+class _MobileMenuLinkState extends State<_MobileMenuLink> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton(
+      onHover: (hovered) => setState(() => _isHovered = hovered),
+      onPressed: () {
+        widget.onClose();
+        _launchUrl(widget.url);
+      },
+      style: TextButton.styleFrom(overlayColor: Colors.transparent),
+      child: IntrinsicWidth(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AnimatedDefaultTextStyle(
+              key: ValueKey('mobile-menu-style-${widget.label}'),
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeInOut,
+              style: Theme.of(context).textTheme.bodyLarge!.copyWith(
+                    fontSize: 36,
+                    fontWeight: FontWeight.w900,
+                    color: _isHovered ? Colors.white : AppColors.text,
+                    decoration: TextDecoration.none,
+                  ),
+              child: Text(widget.label),
+            ),
+            const SizedBox(height: 2),
+            AnimatedContainer(
+              key: ValueKey('mobile-menu-underline-${widget.label}'),
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeInOut,
+              height: 2,
+              color: _isHovered ? Colors.white : Colors.transparent,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MobileCloseButton extends StatefulWidget {
+  final VoidCallback onPressed;
+
+  const _MobileCloseButton({required this.onPressed});
+
+  @override
+  State<_MobileCloseButton> createState() => _MobileCloseButtonState();
+}
+
+class _MobileCloseButtonState extends State<_MobileCloseButton> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      onHover: (hovered) => setState(() => _isHovered = hovered),
+      onPressed: widget.onPressed,
+      style: IconButton.styleFrom(overlayColor: Colors.transparent),
+      icon: TweenAnimationBuilder<Color?>(
+        key: const ValueKey('mobile-menu-close-color'),
+        tween: ColorTween(end: _isHovered ? Colors.white : AppColors.text),
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeInOut,
+        builder: (context, color, child) => SizedBox(
+          width: 28,
+          height: 28,
+          child: CustomPaint(
+            painter: _CloseIconPainter(color ?? AppColors.text),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CloseIconPainter extends CustomPainter {
+  final Color color;
+
+  const _CloseIconPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 6
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(
+        const Offset(3, 3), Offset(size.width - 3, size.height - 3), paint);
+    canvas.drawLine(
+        Offset(size.width - 3, 3), Offset(3, size.height - 3), paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _CloseIconPainter oldDelegate) =>
+      oldDelegate.color != color;
 }
 
 class _HireMeButton extends StatefulWidget {

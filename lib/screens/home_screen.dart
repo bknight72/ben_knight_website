@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_theme.dart';
 import '../widgets/about_section.dart';
 import '../widgets/featured_work_section.dart';
 import '../widgets/footer_section.dart';
@@ -17,6 +18,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  bool _menuOpen = false;
   final _aboutKey = GlobalKey();
   final _workKey = GlobalKey();
   final _experienceKey = GlobalKey();
@@ -50,35 +52,44 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final navBar = NavBar(onSectionTap: _scrollToSection);
-    return Scaffold(
-      extendBodyBehindAppBar: true,
-      appBar: navBar,
-      drawer: NavBar(
-          onSectionTap: (section) {
-            Navigator.of(context).pop();
-            // Wait for the drawer's close animation before scrolling so
-            // ensureVisible measures the final (unobscured) layout.
-            Future.delayed(
-              const Duration(milliseconds: 250),
-              () => _scrollToSection(section),
-            );
-          },
-          showAsDrawer: true),
-      body: SingleChildScrollView(
-        child: Column(
-          children: [
-            SizedBox(
-              height: MediaQuery.paddingOf(context).top +
-                  navBar.preferredSize.height,
+    final navBar = NavBar(
+      onSectionTap: _scrollToSection,
+      onMenuTap: () => setState(() => _menuOpen = true),
+    );
+    return Stack(
+      children: [
+        Scaffold(
+          extendBodyBehindAppBar: true,
+          appBar: navBar,
+          body: SingleChildScrollView(
+            child: Column(
+              children: [
+                SizedBox(
+                  height: MediaQuery.paddingOf(context).top +
+                      navBar.preferredSize.height,
+                ),
+                const HeroSection(),
+                KeyedSubtree(key: _workKey, child: const FeaturedWorkSection()),
+                KeyedSubtree(key: _aboutKey, child: const AboutSection()),
+                const FooterSection(),
+              ],
             ),
-            const HeroSection(),
-            KeyedSubtree(key: _workKey, child: const FeaturedWorkSection()),
-            KeyedSubtree(key: _aboutKey, child: const AboutSection()),
-            const FooterSection(),
-          ],
+          ),
         ),
-      ),
+        Positioned.fill(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            switchInCurve: Curves.easeInOut,
+            switchOutCurve: Curves.easeInOut,
+            child: _menuOpen && MediaQuery.sizeOf(context).width < kMobileBreakpoint
+                ? MobileNavOverlay(
+                    key: const ValueKey('mobile-menu-overlay'),
+                    onClose: () => setState(() => _menuOpen = false),
+                  )
+                : const SizedBox.expand(key: ValueKey('mobile-menu-hidden')),
+          ),
+        ),
+      ],
     );
   }
 }

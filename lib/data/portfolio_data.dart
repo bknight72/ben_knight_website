@@ -1,6 +1,3 @@
-import 'package:flutter/material.dart';
-
-import '../models/experience_entry.dart';
 import '../models/project.dart';
 
 /// Centralized placeholder content for the portfolio site.
@@ -17,7 +14,9 @@ class PortfolioData {
       "Hey, I'm Ben — A Software\nEngineer from Placeholder City.";
 
   static const String heroSubtext =
-      "I'm a security-focused software developer from LA. \n\nI've built Alarm management & response platforms, contributed to browser-extension based red-teaming tools, and am currently working on an AI-powered parser for US drone manuals.";
+      "I'm a security-focused software developer from LA. \n\nI've developed a"
+      " SIEM platform capable of handling millions of alarms, contributed to browser-extension"
+      " red-teaming tools, and am currently building the UAS's AI-powered compendium parser.";
 
   static const String email = 'benknighty@gmail.com';
   static const String githubUrl = 'https://github.com/bknight72';
@@ -35,8 +34,7 @@ class PortfolioData {
           'A short placeholder description of project one — what it does, '
           'the problem it solves, and the impact it had. Replace with real '
           'project details.',
-      placeholderIcon: Icons.image_outlined,
-      placeholderColor: AppPlaceholderColors.tileOne,
+      imagePath: 'web/assets/images/placeholder1.jpg',
     ),
     Project(
       title: 'Nori',
@@ -45,8 +43,7 @@ class PortfolioData {
           'A short placeholder description of project two — what it does, '
           'the problem it solves, and the impact it had. Replace with real '
           'project details.',
-      placeholderIcon: Icons.image_outlined,
-      placeholderColor: AppPlaceholderColors.tileTwo,
+      imagePath: 'web/assets/images/placeholder2.jpg',
     ),
     Project(
       title: 'Placeholder Project Three',
@@ -55,8 +52,7 @@ class PortfolioData {
           'A short placeholder description of project three — what it does, '
           'the problem it solves, and the impact it had. Replace with real '
           'project details.',
-      placeholderIcon: Icons.image_outlined,
-      placeholderColor: AppPlaceholderColors.tileThree,
+      imagePath: 'web/assets/images/placeholder3.jpg',
     ),
     Project(
       title: 'Placeholder Project Three',
@@ -65,8 +61,7 @@ class PortfolioData {
           'A short placeholder description of project three — what it does, '
           'the problem it solves, and the impact it had. Replace with real '
           'project details.',
-      placeholderIcon: Icons.image_outlined,
-      placeholderColor: AppPlaceholderColors.tileThree,
+      imagePath: 'web/assets/images/placeholder4.jpeg',
     ),
     Project(
       title: 'Keyless Entry',
@@ -75,8 +70,7 @@ class PortfolioData {
           'A short placeholder description of project three — what it does, '
           'the problem it solves, and the impact it had. Replace with real '
           'project details.',
-      placeholderIcon: Icons.image_outlined,
-      placeholderColor: AppPlaceholderColors.tileThree,
+      imagePath: 'web/assets/images/placeholder5.jpg',
     ),
   ];
 
@@ -92,37 +86,6 @@ class PortfolioData {
         ' friends, out camping, or watching some spectacular baseball. I\'m also a writer, which you should be able to tell from'
         ' the amount of commas I used in that last sentence. ',
     'If you want to talk to me about anything, go ahead and send me an email at benknighty@gmail.com',
-  ];
-
-  static const List<ExperienceEntry> experience = [
-    ExperienceEntry(
-      role: 'Placeholder Senior Role',
-      company: 'Placeholder Company A',
-      dateRange: '2024 — Present',
-      bullets: [
-        'Placeholder bullet describing a key responsibility or achievement.',
-        'Placeholder bullet describing another key responsibility.',
-        'Placeholder bullet describing measurable impact or outcome.',
-      ],
-    ),
-    ExperienceEntry(
-      role: 'Placeholder Mid-Level Role',
-      company: 'Placeholder Company B',
-      dateRange: '2021 — 2024',
-      bullets: [
-        'Placeholder bullet describing a key responsibility or achievement.',
-        'Placeholder bullet describing another key responsibility.',
-      ],
-    ),
-    ExperienceEntry(
-      role: 'Placeholder Junior Role',
-      company: 'Placeholder Company C',
-      dateRange: '2019 — 2021',
-      bullets: [
-        'Placeholder bullet describing a key responsibility or achievement.',
-        'Placeholder bullet describing another key responsibility.',
-      ],
-    ),
   ];
 
   static const List<String> skills = [
@@ -142,14 +105,4 @@ class PortfolioData {
       "Have a placeholder opportunity in mind? I'd love to hear about it.";
 
   static const String footerText = '© 2026 Ben Knight. Built with Flutter.';
-}
-
-/// Distinct placeholder tile colors used for project cards so cards are
-/// visually distinguishable before real screenshots are added.
-class AppPlaceholderColors {
-  AppPlaceholderColors._();
-
-  static const Color tileOne = Color(0xFFEEEEEE);
-  static const Color tileTwo = Color(0xFFE3EDEA);
-  static const Color tileThree = Color(0xFFE8E8E8);
 }

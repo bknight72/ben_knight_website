@@ -29,7 +29,10 @@ class SectionContainer extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: kMaxContentWidth),
           child: Padding(
-            padding: padding,
+            padding: MediaQuery.sizeOf(context).width < kMobileBreakpoint
+                ? padding.add(
+                    const EdgeInsets.symmetric(horizontal: AppSpacing.sm))
+                : padding,
             child: child,
           ),
         ),

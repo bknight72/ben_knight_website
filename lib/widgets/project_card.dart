@@ -39,17 +39,12 @@ class _ProjectCardState extends State<ProjectCard> {
               context: context,
               builder: (_) => ProjectDetailDialog(project: project),
             ),
-            child: Container(
+            child: SizedBox(
               height: 420,
-              color: project.placeholderColor,
               child: Stack(
                 children: [
-                  Center(
-                    child: Icon(
-                      project.placeholderIcon,
-                      size: 56,
-                      color: Colors.black38,
-                    ),
+                  Positioned.fill(
+                    child: Image.asset(project.imagePath, fit: BoxFit.cover),
                   ),
                   Positioned.fill(
                     child: AnimatedOpacity(

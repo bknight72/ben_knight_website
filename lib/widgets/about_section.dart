@@ -15,91 +15,106 @@ class AboutSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SectionContainer(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final wide = constraints.maxWidth >= kMobileBreakpoint;
+          const heading = Text(
             'About.',
             style: TextStyle(fontSize: 30, fontWeight: FontWeight(900)),
-          ),
-          const SizedBox(height: AppSpacing.xxxl),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final wide = constraints.maxWidth >= kMobileBreakpoint;
-              final portrait = DecoratedBox(
-                position: DecorationPosition.foreground,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(80),
-                  border: Border.all(color: AppColors.accent, width: 2),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(80),
-                  child: Image.asset(
-                    'web/assets/images/benoutdoors.jpg',
-                    width: 160,
-                    height: 240,
-                    fit: BoxFit.cover,
-                  ),
-                ),
-              );
-              final bodyLarge = Theme.of(context).textTheme.bodyLarge;
-              final text = Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (final paragraph in PortfolioData.aboutParagraphs)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: AppSpacing.md),
-                      child: paragraph.endsWith(PortfolioData.email)
-                          ? Text.rich(
+          );
+          final portrait = DecoratedBox(
+            position: DecorationPosition.foreground,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(80),
+              border: Border.all(color: AppColors.accent, width: 2),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(80),
+              child: Image.asset(
+                'web/assets/images/benoutdoors.jpg',
+                width: 160,
+                height: 240,
+                fit: BoxFit.cover,
+              ),
+            ),
+          );
+          final bodyLarge = Theme.of(context).textTheme.bodyLarge;
+          final text = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final paragraph in PortfolioData.aboutParagraphs)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: AppSpacing.md),
+                  child: paragraph.endsWith(PortfolioData.email)
+                      ? Text.rich(
+                          TextSpan(
+                            children: [
                               TextSpan(
-                                children: [
-                                  TextSpan(
-                                    text: paragraph.substring(
-                                      0,
-                                      paragraph.length -
-                                          PortfolioData.email.length,
-                                    ),
-                                  ),
-                                  const WidgetSpan(
-                                    alignment: PlaceholderAlignment.baseline,
-                                    baseline: TextBaseline.alphabetic,
-                                    child: _AboutEmailLink(),
-                                  ),
-                                ],
+                                text: paragraph.substring(
+                                  0,
+                                  paragraph.length - PortfolioData.email.length,
+                                ),
                               ),
-                              style: AppTextStyles.relaxed(bodyLarge),
-                            )
-                          : Text(
-                              paragraph,
-                              style: AppTextStyles.relaxed(bodyLarge),
-                            ),
-                    ),
-                ],
-              );
+                              const WidgetSpan(
+                                alignment: PlaceholderAlignment.baseline,
+                                baseline: TextBaseline.alphabetic,
+                                child: _AboutEmailLink(),
+                              ),
+                            ],
+                          ),
+                          style: AppTextStyles.relaxed(bodyLarge),
+                        )
+                      : Text(
+                          paragraph,
+                          style: AppTextStyles.relaxed(bodyLarge),
+                        ),
+                ),
+            ],
+          );
 
-              if (wide) {
-                return Row(
+          if (wide) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                heading,
+                const SizedBox(height: AppSpacing.xxxl),
+                Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     portrait,
                     const SizedBox(width: AppSpacing.xxxl),
                     Expanded(child: text),
                   ],
-                );
-              }
+                ),
+              ],
+            );
+          }
 
-              return Column(
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Center(child: portrait),
-                  const SizedBox(height: AppSpacing.xl),
-                  text,
+                  heading,
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.center,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: portrait,
+                      ),
+                    ),
+                  ),
                 ],
-              );
-            },
-          ),
-        ],
+              ),
+              const SizedBox(height: AppSpacing.xl),
+              text,
+            ],
+          );
+        },
       ),
     );
   }

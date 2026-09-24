@@ -62,6 +62,11 @@ flutter:
 
   assets:
     - web/assets/images/benoutdoors.jpg
+    - web/assets/images/placeholder1.jpg
+    - web/assets/images/placeholder2.jpg
+    - web/assets/images/placeholder3.jpg
+    - web/assets/images/placeholder4.jpeg
+    - web/assets/images/placeholder5.jpg
 
   fonts:
     - family: CircularStd
