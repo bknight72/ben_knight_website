@@ -1,3 +1,5 @@
+import { browserRuntimeReady } from "./local-readiness.ts";
+
 // CLI status contains disposable local keys; consume in memory, never print or persist them.
 const status = JSON.parse(await new Response(Deno.stdin.readable).text());
 for (
@@ -54,12 +56,7 @@ if (browserEnabled) {
         "http://127.0.0.1:54321/functions/v1/api/health",
         { headers: { Origin: browserOrigin } },
       );
-      await response.arrayBuffer();
-      if (
-        response.ok &&
-        response.headers.get("access-control-allow-origin") ===
-          browserOrigin
-      ) {
+      if (await browserRuntimeReady(response, browserOrigin)) {
         ready = true;
         break;
       }

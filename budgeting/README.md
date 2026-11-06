@@ -184,6 +184,15 @@ The backend command above is the authoritative fixed-production-scope runner. `s
 
 GitHub validation is in `.github/workflows/budgeting-ci.yml`, scoped to budgeting/security/workflow changes on pull requests and pushes to `master`, with manual runs. Its unconfigured artifact is not a production deployment. The portfolio workflow remains separate. For GitLab, select `budgeting/.gitlab-ci.yml` as the CI configuration path, enable the instance runner under Settings > CI/CD > Runners, and provide a trusted shell runner with local Docker tagged `shared`; rules cover merge requests and `main`/`master`. A remote Docker-in-Docker daemon cannot resolve the scripts' checkout bind paths. Creating a mirror, enabling runners, and protected secrets are operator tasks, not actions performed by this README.
 
+Launch follow-up on 2026-11-06:
+
+- Public GitHub job metadata confirms Pages run `42156567756` failed at root analysis and Budgeting Validation run `42156567708` passed validation/packaging but failed isolated Supabase integration.
+- Root analysis scanning this independent package was reproduced locally; root analyzer exclusions now keep budgeting under its dedicated validation. Portfolio analysis/release build pass locally, while an additional portfolio widget-test run has unresolved failures outside that workflow. The existing portfolio returned HTTP 200.
+- Budgeting analysis, 57 Flutter tests (89.0%), 27 backend tests (88.15%), disposable database checks, static browser checks, runtime checks, package/audit tests, 7 bridge tests, and the offline encrypted restore drill passed again locally.
+- The complete `scripts/validate.sh` entrypoint then passed with the existing public build CA, including a fresh tooling-image build, release compilation, and 37 Deno tests (27 existing tests plus 10 local-readiness regressions). Fixed-scope production coverage remains 88.15%; test helpers are not credited toward that gate. The packaged artifact remains unconfigured and must not be deployed as production.
+- Isolated-stack testing reproduced a local readiness bug: Kong replaces the function's CORS header with `*`. The test-only probe now accepts that header only with HTTP 200 and healthy database JSON; production CORS and financial authorization are unchanged. The real API acceptance harness then passed. Signed-in Chromium acceptance remains incomplete and must pass before launch; extended investigation was deferred to prioritize a pushable repository.
+- Dev Container setup resolved both packages with the existing public CA, but actual VS Code client use and signed-in Supabase acceptance remain separate gates. No hosted deployment or successful final GitHub rerun is established by these results.
+
 ## Supabase Setup
 
 Perform this only for an owner-approved isolated hosted environment first, using the Supabase dashboard or CLI installed/run inside a container. Apply every SQL migration in lexical order through trusted administration. Preserve deployed migration history; use forward corrective migrations. Never load `tests/bootstrap.sql` into a hosted project.
