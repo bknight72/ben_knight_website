@@ -1,0 +1,19 @@
+{
+  "framework": null,
+  "installCommand": "true",
+  "buildCommand": "true",
+  "outputDirectory": "build/web",
+  "rewrites": [{ "source": "/((?!.*\\.[a-zA-Z0-9]+$).*)", "destination": "/index.html" }],
+  "headers": [{
+    "source": "/(.*)",
+    "headers": [
+      { "key": "Cache-Control", "value": "no-store" },
+      { "key": "X-Content-Type-Options", "value": "nosniff" },
+      { "key": "X-Frame-Options", "value": "DENY" },
+      { "key": "Referrer-Policy", "value": "no-referrer" },
+      { "key": "X-Robots-Tag", "value": "noindex, nofollow, noarchive" },
+      { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" },
+      { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://js.stripe.com https://www.gstatic.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.stripe.com https://*.stripe.com https://www.gstatic.com; frame-src https://*.stripe.com https://*.link.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'" }
+    ]
+  }]
+}

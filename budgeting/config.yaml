@@ -1,0 +1,11 @@
+# Public defaults only. Credentials are supplied with --dart-define.
+currency: USD
+reporting_timezone: America/Denver
+supported_reporting_timezones:
+  - America/Denver
+budget_rollover: false
+max_import_bytes: 5242880
+max_import_rows: 10000
+# Enable only after owner approval; STRIPE_ENABLED build define is also required.
+stripe_enabled: false
+builder: Novacoast-VCA-805

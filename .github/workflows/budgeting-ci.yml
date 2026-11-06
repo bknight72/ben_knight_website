@@ -1,0 +1,34 @@
+name: Budgeting Validation
+on:
+  pull_request:
+    paths: ['budgeting/**', '.devcontainer/**', '.github/workflows/budgeting-*.yml', 'kilo.json', '.gitignore']
+  push:
+    branches: [master]
+    paths: ['budgeting/**', '.devcontainer/**', '.github/workflows/budgeting-*.yml', 'kilo.json', '.gitignore']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Containerized validation and coverage
+        run: sh budgeting/scripts/validate.sh
+      - name: Package static artifact
+        run: sh budgeting/scripts/package-vercel.sh
+      - name: Real isolated Supabase integration
+        run: |
+          sh budgeting/scripts/build-local-browser.sh
+          BUDGETING_BROWSER_INTEGRATION=true BUDGETING_BROWSER_ARTIFACT="$GITHUB_WORKSPACE/budgeting/build/local-browser" sh budgeting/supabase/tests/run-local.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: budgeting-static-unconfigured
+          path: budgeting/.vercel/output
+          include-hidden-files: true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: budgeting-coverage
+          path: budgeting/coverage

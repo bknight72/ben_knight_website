@@ -1,0 +1,16 @@
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "master"'
+budgeting-validation:
+  tags: [shared]
+  # Requires a trusted shell runner with local Docker (bind paths must match).
+  # Remote Docker-in-Docker cannot see checkout paths mounted by these scripts.
+  script:
+    - sh budgeting/scripts/validate.sh
+    - sh budgeting/scripts/package-vercel.sh
+    - sh budgeting/scripts/build-local-browser.sh
+    - BUDGETING_BROWSER_INTEGRATION=true BUDGETING_BROWSER_ARTIFACT="$CI_PROJECT_DIR/budgeting/build/local-browser" sh budgeting/supabase/tests/run-local.sh
+  artifacts:
+    when: always
+    paths: [budgeting/coverage/, budgeting/.vercel/output/]

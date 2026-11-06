@@ -1,0 +1,64 @@
+\set ON_ERROR_STOP on
+begin;
+insert into auth.users(id) values('00000000-0000-4000-8000-000000000001'),('00000000-0000-4000-8000-000000000002');
+insert into private.app_owner(owner_id) values('00000000-0000-4000-8000-000000000001');
+insert into public.accounts(id,owner_id,source,name,kind) values('10000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000001','manual','Synthetic cash','cash');
+insert into public.categories(id,owner_id,name,kind) values('20000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000001','Synthetic food','expense');
+create function pg_temp.assert(ok boolean, message text) returns void language plpgsql as $$ begin if not coalesce(ok,false) then raise exception 'assertion: %',message; end if; end $$;
+set local role authenticated;
+set local request.jwt.claims='{"sub":"00000000-0000-4000-8000-000000000002","aal":"aal2"}';
+select pg_temp.assert(not public.is_budget_owner(),'wrong owner denied');
+select pg_temp.assert((select count(*)=0 from public.accounts),'wrong owner sees no accounts');
+select pg_temp.assert((select count(*)=0 from public.monthly_actuals),'wrong owner aggregate empty');
+set local request.jwt.claims='{"sub":"00000000-0000-4000-8000-000000000001","aal":"aal1"}';
+select pg_temp.assert(not public.is_budget_owner(),'aal1 denied');
+select pg_temp.assert((select count(*)=0 from public.accounts),'aal1 no financial access');
+set local request.jwt.claims='{"sub":"00000000-0000-4000-8000-000000000001","aal":"aal2"}';
+select pg_temp.assert(public.is_budget_owner(),'owner aal2 accepted');
+select pg_temp.assert((select count(*)=1 from public.accounts),'owner reads account');
+select pg_temp.assert(not has_schema_privilege('authenticated','private','usage'),'private schema inaccessible');
+select pg_temp.assert(not has_function_privilege('authenticated','public.backend_state(text,jsonb)','execute'),'service gateway inaccessible');
+select pg_temp.assert(not has_table_privilege('authenticated','public.transactions','insert'),'provider writes inaccessible');
+do $$ begin
+ begin insert into public.accounts(owner_id,source,name,kind) values('00000000-0000-4000-8000-000000000001','stripe','Forbidden','cash'); raise exception 'RLS accepted provider account'; exception when insufficient_privilege then null; end;
+ begin insert into public.categories(owner_id,name) values('00000000-0000-4000-8000-000000000002','Forbidden'); raise exception 'RLS accepted foreign category'; exception when insufficient_privilege then null; end;
+end $$;
+reset role;
+set local role anon;
+select pg_temp.assert(not has_table_privilege('anon','public.accounts','select'),'anonymous denied');
+reset role;
+-- Transactional idempotency, annotation-preserving undo, and cap reservations.
+select public.backend_state('import','{"owner_id":"00000000-0000-4000-8000-000000000001","account_id":"10000000-0000-4000-8000-000000000001","fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mapping":{},"rows":[{"source_id":"bank:1","amount_minor":-1000,"description":"Synthetic","transaction_date":"2026-11-01"},{"source_id":"bank:2","amount_minor":200,"description":"Refund","transaction_date":"2026-11-02"}]}');
+select public.backend_state('import','{"owner_id":"00000000-0000-4000-8000-000000000001","account_id":"10000000-0000-4000-8000-000000000001","fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mapping":{},"rows":[]}');
+select pg_temp.assert((select count(*)=2 from public.transactions),'exact import idempotent');
+insert into public.transaction_annotations(transaction_id,owner_id,category_id) select id,owner_id,'20000000-0000-4000-8000-000000000001' from public.transactions;
+set local role authenticated;
+select pg_temp.assert((select spending_minor=800 and income_minor=0 from public.monthly_actuals),'refund offsets spending');
+reset role;
+delete from public.transaction_annotations where transaction_id in(select id from public.transactions where source_id='bank:2');
+select public.backend_state('undo',jsonb_build_object('id',(select id from public.import_batches),'owner_id','00000000-0000-4000-8000-000000000001'));
+select pg_temp.assert((select count(*)=1 from public.transactions),'undo retained later annotated edit');
+select public.backend_state('reserve','{"account_id":"10000000-0000-4000-8000-000000000001"}');
+do $$ begin
+ begin perform public.backend_state('reserve','{"account_id":"10000000-0000-4000-8000-000000000001"}'); raise exception 'cooldown bypass'; exception when raise_exception then if sqlerrm<>'cooldown' then raise; end if; end;
+end $$;
+insert into private.refresh_usage(account_id) select '10000000-0000-4000-8000-000000000001' from generate_series(1,49);
+do $$ begin
+ begin perform public.backend_state('reserve','{"account_id":"10000000-0000-4000-8000-000000000001"}'); raise exception 'cap bypass'; exception when raise_exception then if sqlerrm<>'monthly_cap' then raise; end if; end;
+end $$;
+select public.backend_state('webhook','{"id":"evt_synthetic","type":"test","account_id":"10000000-0000-4000-8000-000000000001","kind":"sync"}');
+select public.backend_state('webhook','{"id":"evt_synthetic","type":"test","account_id":"10000000-0000-4000-8000-000000000001","kind":"sync"}');
+select pg_temp.assert((select count(*)=1 from private.jobs where dedupe_key='event:evt_synthetic'),'webhook replay idempotent');
+select public.backend_state('claim');
+select pg_temp.assert((select count(*)=1 from private.jobs where status='processing'),'one active account lease');
+select pg_temp.assert(public.backend_state('claim')='{}'::jsonb,'cannot lease same account twice');
+select public.backend_state('page',jsonb_build_object('id',(select id from private.jobs where status='processing'),'lease_token',(select lease_token from private.jobs where status='processing'),'cursor','fctxn_new','rows','[{"source_id":"fctxn_synthetic","amount_minor":-200,"description":"Synthetic provider","transaction_date":"2026-11-03","posted_date":"2026-11-03","status":"posted","provider_updated":20}]'::jsonb));
+select public.backend_state('page',jsonb_build_object('id',(select id from private.jobs where status='processing'),'lease_token',(select lease_token from private.jobs where status='processing'),'cursor','fctxn_old','rows','[{"source_id":"fctxn_synthetic","amount_minor":-100,"description":"Stale pending","transaction_date":"2026-11-03","posted_date":null,"status":"pending","provider_updated":10}]'::jsonb));
+select pg_temp.assert((select status='posted' and amount_minor=-200 from public.transactions where source_id='fctxn_synthetic'),'out of order provider updates cannot revert posted status');
+select public.backend_state('yield',jsonb_build_object('id',(select id from private.jobs where status='processing'),'lease_token',(select lease_token from private.jobs where status='processing')));
+select pg_temp.assert((select count(*)=1 from private.jobs where attempts=0 and cursor='fctxn_old'),'yield preserves cursor without consuming retry budget');
+update private.jobs set status='processing',lease_until=now()-interval '1 minute',attempts=8 where kind='balance';
+select public.backend_state('claim');
+select pg_temp.assert((select status='failed' from private.jobs where kind='balance'),'expired final-attempt lease becomes visible failure');
+select pg_temp.assert((select count(*)=50 from private.refresh_usage),'uncertain calls never refund reservations');
+rollback;

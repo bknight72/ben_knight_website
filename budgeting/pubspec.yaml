@@ -1,0 +1,26 @@
+name: private_budgeting
+description: Private single-owner budgeting. Built at Novacoast.
+publish_to: none
+version: 1.0.0+1
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  supabase: any
+  flutter_svg: any
+  timezone: any
+  yaml: any
+dev_dependencies:
+  yet_another_json_isolate: any
+  crypto: any
+  http: any
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+  flutter_lints: any
+flutter:
+  uses-material-design: true
+  assets:
+    - config.yaml

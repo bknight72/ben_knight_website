@@ -1,0 +1,23 @@
+project_id = "private-budgeting"
+
+[api]
+enabled = true
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[auth]
+enable_signup = false
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
+[functions.api]
+verify_jwt = false
+
+[functions.stripe-webhook]
+verify_jwt = false
+
+[functions.worker]
+verify_jwt = false

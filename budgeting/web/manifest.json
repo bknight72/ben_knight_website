@@ -1,0 +1,9 @@
+{
+  "name": "Ledger Private Budgeting",
+  "short_name": "Ledger",
+  "description": "Private single-owner budgeting. Built at Novacoast.",
+  "start_url": ".",
+  "display": "browser",
+  "background_color": "#f4f6f3",
+  "theme_color": "#102e2c"
+}
