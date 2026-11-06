@@ -59,7 +59,18 @@ async function fill(label, value) {
   const field = page.getByRole("textbox", { name: label, exact: true })
     .or(page.getByLabel(label, { exact: true })).first();
   await field.waitFor();
+  await field.click();
+  // Flutter attaches editing handlers on a later semantics frame after focus.
+  await page.waitForFunction((element) =>
+    document.activeElement === element &&
+    !element.dispatchEvent(
+      new MouseEvent("mousemove", {
+        cancelable: true,
+        bubbles: false,
+      }),
+    ), await field.elementHandle());
   await field.fill(value);
+  await field.press("Tab");
 }
 async function click(name) {
   await page.getByRole("button", { name, exact: true }).click();
@@ -67,15 +78,28 @@ async function click(name) {
 async function authenticate(password) {
   await fill("Email address", fixture.email);
   await fill("Password", password);
+  const signedIn = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === "/auth/v1/token" &&
+    response.request().method() === "POST"
+  );
   await click("Sign in");
+  const login = await signedIn;
+  const submitted = login.request().postDataJSON();
+  assert.ok(submitted.email === fixture.email, "Browser submitted wrong email");
+  assert.ok(
+    submitted.password === password,
+    "Browser submitted wrong password",
+  );
+  assert.equal(login.status(), 200, "Real password login failed");
   await page.getByRole("textbox", { name: "Authenticator code", exact: true })
     .waitFor({ timeout: 30000 });
   // The API harness enrolled MFA immediately before this run. Avoid reusing its current TOTP window.
   const wait = 30000 - (Date.now() % 30000) + 500;
   await new Promise((resolve) => setTimeout(resolve, wait));
   const verified = page.waitForResponse((response) =>
-    response.url().includes("/factors/") &&
-    response.url().endsWith("/verify") && response.request().method() === "POST"
+    new URL(response.url()).pathname.includes("/factors/") &&
+    new URL(response.url()).pathname.endsWith("/verify") &&
+    response.request().method() === "POST"
   );
   await fill("Authenticator code", totp(fixture.totpSecret));
   await click("Verify and continue");
@@ -87,9 +111,11 @@ try {
   await page.goto(base, { waitUntil: "networkidle" });
   await semantics();
   const token = await authenticate(fixture.password);
-  await page.getByText("TRACKED NET POSITION", { exact: true }).waitFor({
-    timeout: 30000,
-  });
+  // Wait for real fixture data rather than decorative metric text merged by semantics.
+  await page.getByText("Synthetic local cash", { exact: false }).first()
+    .waitFor({
+      timeout: 30000,
+    });
   assert.ok(
     await page.getByText("Synthetic local cash", { exact: false }).count() > 0,
     "Real API fixture was not rendered",
@@ -102,8 +128,15 @@ try {
     response.request().method() === "POST"
   );
   await click("Save");
-  assert.equal((await saved).status(), 201, "Browser account write failed");
-  await page.getByText("Browser synthetic cash", { exact: true }).waitFor();
+  const accountWrite = await saved;
+  assert.ok(
+    accountWrite.request().postDataJSON().name === "Browser synthetic cash",
+    "Browser submitted wrong account name",
+  );
+  assert.equal(accountWrite.status(), 201, "Browser account write failed");
+  // Account cards merge their text into the accessible group name.
+  await page.getByRole("group", { name: /^Browser synthetic cash\s/ })
+    .waitFor();
   const check = await fetch(
     `${fixture.supabaseUrl}/rest/v1/accounts?name=eq.Browser%20synthetic%20cash&select=id,owner_id`,
     {
@@ -120,7 +153,8 @@ try {
   await page.getByText("Sign out", { exact: true }).click();
   await page.getByText("Welcome to your ledger.", { exact: true }).waitFor();
   assert.equal(
-    await page.getByText("Browser synthetic cash", { exact: true }).count(),
+    await page.getByRole("group", { name: /^Browser synthetic cash\s/ })
+      .count(),
     0,
     "Logout retained financial UI",
   );
