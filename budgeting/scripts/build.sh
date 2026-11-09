@@ -15,8 +15,8 @@ if [ -n "${BUILD_CA_FILE:-}" ]; then set -- "$@" --secret "id=build_ca,src=$BUIL
 docker build "$@" .
 container=$(docker create budgeting-build:latest)
 trap 'docker rm "$container" >/dev/null' EXIT INT TERM
-# Replace stale static output instead of mixing previous build artifacts.
-docker run --rm -v "$PWD:/workspace" -w /workspace denoland/deno:latest deno eval 'await Deno.remove("build/web", {recursive:true}).catch(e => {if (!(e instanceof Deno.errors.NotFound)) throw e;}); await Deno.mkdir("build/web", {recursive:true});'
+# Match the checkout owner so Linux runners can copy into the generated directory.
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/workspace" -w /workspace denoland/deno:latest deno eval 'await Deno.remove("build/web", {recursive:true}).catch(e => {if (!(e instanceof Deno.errors.NotFound)) throw e;}); await Deno.mkdir("build/web", {recursive:true});'
 mkdir -p build/web
 docker cp "$container:/workspace/build/web/." build/web/
 sh scripts/package-vercel.sh
