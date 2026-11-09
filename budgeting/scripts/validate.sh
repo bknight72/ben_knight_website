@@ -28,8 +28,8 @@ docker run --rm -u root "$@" -v "$PWD:/workspace" -w /workspace budgeting-flutte
   '\''
 '
 docker run --rm -v "$PWD:/workspace:ro" -w /workspace denoland/deno:latest deno test --allow-read test/bridge_test.js
-docker run --rm -v "$PWD:/workspace:ro" -w /workspace denoland/deno:latest deno fmt --check scripts/audit-artifact.ts scripts/audit-artifact_test.ts scripts/package-vercel.ts scripts/package-vercel_test.ts scripts/test-config.ts
-docker run --rm -v "$PWD:/workspace:ro" -w /workspace denoland/deno:latest deno test --allow-read --allow-write scripts/package-vercel_test.ts scripts/audit-artifact_test.ts
+docker run --rm -v "$PWD:/workspace:ro" -w /workspace denoland/deno:latest deno fmt --check scripts/audit-artifact.ts scripts/audit-artifact_test.ts scripts/package-vercel.ts scripts/package-vercel_test.ts scripts/test-config.ts scripts/release.ts scripts/release_test.ts
+docker run --rm -v "$PWD/..:/repo:ro" -w /repo/budgeting denoland/deno:latest deno test --allow-read --allow-write --allow-env scripts/package-vercel_test.ts scripts/audit-artifact_test.ts scripts/release_test.ts
 docker run --rm -v "$PWD:/workspace" -w /workspace/supabase denoland/deno:latest sh -ec '
   sh tests/run-deno.sh
   cp /tmp/budgeting-coverage/lcov.info /workspace/coverage/backend.lcov

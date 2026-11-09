@@ -63,7 +63,7 @@ combined environment inventory or pass it wholesale to builds.
 | --- | --- |
 | `supabase-admin.env` | `SUPABASE_ACCESS_TOKEN` for approved containerized administration |
 | `edge-secrets.env` | Application Edge secrets listed in section 5, not reserved Supabase names |
-| `vercel.env` | `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` only |
+| Deployment credentials | Prefer GitHub's protected `budgeting-production` environment in section 8; never include its token in build/backend environment files |
 | `source.env` | Recovery `DATABASE_URL` only, plus explicitly documented recovery settings if required |
 | `age-recipients.txt` | Public native age recipient lines |
 | `age-identity.txt` | Private native age identity, held separately from backups and deployment secrets |
@@ -78,7 +78,7 @@ open the repository Actions tab:
 
 - `Deploy to GitHub Pages` must pass. Its build/deploy path serves the portfolio,
   not budgeting. Preserve its successful-build prerequisite.
-- `Budgeting Validation` must pass, including `Real isolated Supabase integration`.
+- `Budgeting Validation and Release` must pass its validation job, including `Real isolated Supabase integration` and both independent 70% coverage gates.
   Do not skip this step merely because a prior local test passed.
 - Record the actual commit SHA and run URLs. A green older commit is insufficient.
 
@@ -293,15 +293,23 @@ JSON export is useful portability, not a complete recovery backup.
 
 ## 7. Build A Production-Configured Artifact
 
-Create a separate Vercel project for budgeting. Record its organization and
-project IDs in private `vercel.env`. Do not connect the current no-op source-build
-settings as an automatic deployment pipeline. Do not change the portfolio project.
+Create a separate Vercel project for budgeting only after owner authorization.
+Record its account/team ID, project ID, and exact project name securely. Disable
+automatic Vercel Git deployments for this dedicated project using its supported
+project-level control; do not disconnect a shared integration or change the
+portfolio project. Clear the dedicated project's Vercel **Root Directory** setting
+(leave it empty, rather than `budgeting`) for this artifact-only CLI pipeline.
+GitHub builds from `budgeting`, but the deploy container receives only the release
+artifact as its root; a remote `budgeting` root would reference a nonexistent
+subdirectory. Target verification rejects a nonempty root before publishing.
+The current no-op source-build settings are prebuilt-only,
+not an automatic source-build pipeline.
 
 Build only with browser-safe values:
 
 ```sh
-SUPABASE_URL=https://YOUR_PROJECT.supabase.co \
-SUPABASE_PUBLISHABLE_KEY=YOUR_BROWSER_SAFE_PUBLISHABLE_KEY \
+SUPABASE_URL="${SUPABASE_URL:?Set the verified hosted project URL}" \
+SUPABASE_PUBLISHABLE_KEY="${SUPABASE_PUBLISHABLE_KEY:?Set its browser publishable key}" \
 STRIPE_ENABLED=false \
 STRIPE_PUBLISHABLE_KEY= \
 sh budgeting/scripts/build.sh
@@ -312,30 +320,119 @@ corporate trust. These public values are embedded in JavaScript and are not
 secrets. Never substitute a service-role or secret key. Backend configuration must
 not be supplied as Docker build arguments or loaded into this shell invocation.
 
+Set these public shell values from the intended Supabase project first.
+`build.sh` runs containerized `release.ts preflight`: the URL must be HTTPS with
+a 20-character lowercase alphanumeric hosted project reference under
+`supabase.co`, no credentials/port/query/fragment, and only the root path. The key
+must use `sb_publishable_` plus at least 20 letters, digits, underscores, or
+hyphens, without placeholder markers. Legacy JWT anon keys are not accepted by
+this release path, even though application compatibility remains. Shape checks
+cannot prove project/key ownership: confirm the pair in Supabase settings.
+Stripe must be `false` with an empty Stripe publishable key. Empty/unconfigured
+builds are intentionally supported by `validate.sh` only, not `build.sh`.
+
 The script replaces `budgeting/build/web`, audits the static artifact, and packages
 `budgeting/.vercel/output`. Verify that output is for the intended project and
 does not display the safe unconfigured screen. Do not deploy
 `build/local-browser`, which embeds disposable localhost configuration.
 
-Archive the exact configured prebuilt artifact privately with the source revision
-and build date so it can be redeployed. The artifact audit is useful defense, not
-a substitute for keeping privileged credentials out of the build.
+Run `sh budgeting/scripts/test-release-browser.sh` after a configured local build
+with the same `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` exported (and
+`BUILD_CA_FILE` if needed) to exercise startup and packaged assets without hosted
+login or financial writes. Values assigned only before the build command are not
+automatically retained for a subsequent smoke command.
+The pipeline repeats this before retaining its exact artifact. An artifact audit
+is useful defense, not a substitute for keeping privileged credentials out of
+the build. These instructions do not claim the commands or hosted checks ran.
 
 ## 8. Deploy Vercel And Configure The Subdomain
 
-With explicit production authorization and the verified project IDs:
+### Configure GitHub Without Activating
 
-```sh
-docker run --rm \
-  --env-file /absolute/private/vercel.env \
-  -v "$PWD/budgeting:/workspace" -w /workspace \
-  node:latest sh -ec \
-  'npx --yes vercel deploy --prebuilt --prod --token "$VERCEL_TOKEN"'
-```
+Leave `BUDGETING_DEPLOY_ENABLED` unset until explicit first-publish authorization.
+Any value other than exact `true` leaves releases disabled while validation runs.
+Configure the following through GitHub settings, never tracked files or chat:
 
-Record the deployment URL and confirm it belongs to the dedicated project. An
-isolated preview can omit `--prod`, but real Auth/API behavior needs its exact
-origin in Auth/CORS; never solve preview problems with wildcard production access.
+| Location | Setting | Value / purpose |
+| --- | --- | --- |
+| Repository variable | `BUDGETING_DEPLOY_ENABLED` | Unset initially; exact `true` enables release jobs |
+| Repository variable | `SUPABASE_URL` | Verified production-shaped hosted project origin from section 7 |
+| Repository variable | `SUPABASE_PUBLISHABLE_KEY` | Matching browser-safe publishable key |
+| `budgeting-production` environment variable | `VERCEL_ORG_ID` | Verified account/team identifier |
+| Same environment variable | `VERCEL_PROJECT_ID` | Existing dedicated budgeting project ID |
+| Same environment variable | `VERCEL_PROJECT_NAME` | Exact existing project name, lowercase letters/digits/hyphens |
+| Same environment variable | `BUDGETING_PRODUCTION_URL` | Exactly `https://budgeting.benknight.dev` |
+| Same environment secret | `VERCEL_TOKEN` | Least-access practical deployment token |
+| Same environment secret, optional | `VERCEL_AUTOMATION_BYPASS_SECRET` | Approved bypass for protected unique deployment smoke |
+
+Restrict the `budgeting-production` environment to branch `master` only. Optional
+required reviewers may add approval where supported; none is required by default.
+Verify this branch restriction in platform settings: YAML alone does not enforce
+it. Keep environment secrets away from PR validation and build jobs. Do not load
+backend `.env` files or service-role keys into any frontend job. Install Flutter,
+Deno/npm dependencies, browser tooling, and Vercel CLI only in containers.
+
+### Activate And Release
+
+Complete platform/DNS/TLS/backend readiness and get explicit owner authorization
+before setting the enable variable to `true` and dispatching current `master` in
+Actions. Plan approval, writing these docs, or successful local checks alone do
+not authorize activation, pushing, or publishing.
+
+Every push/merge to `master` is eligible, even documentation-only changes. Manual
+runs must select current `master`; a re-run is eligible only while its original
+SHA is still current. PRs including forks validate only. Other branches, tags,
+previews, schedules, and daily image/dependency rebuilds cannot trigger a release.
+Do not enable a duplicate Vercel Git/source deployment path.
+
+The workflow requires successful validation and real isolated Supabase/browser
+integration before `release-build`, which runs configured `build.sh` and local
+`test-release-browser.sh`. Failed gates cannot publish. It checks current master
+before building and again inside the serialized `deploy` job after queuing.
+Stale runs fail: dispatch a new current-master run instead of retrying old code.
+Production uses `cancel-in-progress: false`, independently of cancelable
+validation. GitHub concurrency is not FIFO and can supersede pending jobs; do not
+manually cancel an in-flight production publish as a routine release strategy.
+
+### Evidence And Verification
+
+The immutable `budgeting-release-<run-id>-<attempt>` artifact contains only
+`.vercel/output` and a non-served `manifest.json`. Hidden output is explicitly
+included; missing files fail upload. Retention is 30 days and access follows
+repository permissions, so all contents must be browser-safe. Never substitute
+the unconfigured validation artifact or `build/local-browser`. The manifest
+records source SHA, run/attempt, build time, resolved tool versions and image
+evidence as available, plus per-file checksums. Keep necessary nonsensitive
+recovery evidence securely before artifacts expire.
+
+Deploy uses a fresh checkout of the trusted SHA and downloads the exact same-run
+artifact ID, then verifies expected SHA, checksums, and allowed artifact contents
+read-only. It runs no artifact-supplied scripts and does not recompile. Before
+publishing, `release.ts target` checks authenticated Vercel account/project/name;
+it must not implicitly create or relink a project. The token is scoped only to
+the publish step, never dependency installation or smoke. Publishing uses the
+containerized CLI's `vercel deploy --prebuilt --prod` from the staged release.
+
+The workflow records the unique project deployment URL and ID, then performs
+bounded/retrying HTTPS checks at that URL and the exact production URL: root,
+extensionless reload, expected security/no-store headers, JS content type and
+public config, exact HTML/JavaScript checksums from the retained release, and
+backend JSON `status: ok` with `database: connected`. Hosted
+configured browser smoke runs at both URLs with `BUDGET_HOSTED_SMOKE=true` and
+`BUDGET_BROWSER_URL` set by the workflow. These steps receive no Vercel deployment
+token and perform no financial writes or owner login. If Deployment Protection
+requires the approved optional automation bypass, store it only as the environment
+secret; it is injected only into smoke steps and sent only to the unique Vercel
+origin, not the production domain or backend. Never disable protection or log the
+secret to get green CI.
+
+Record the actual run's source revision, artifact ID/digest, deployment URL/ID,
+production link, and check results from its summary. A smoke failure after publish
+fails CI but may leave the release live: inspect Vercel state before retrying.
+Configured startup/readiness is not the full synthetic acceptance in section 10;
+no new execution or hosted acceptance result is established by this guide.
+
+### Configure Only The Budgeting Subdomain
 
 In Vercel's domain settings add **only `budgeting.benknight.dev`**. At the
 authoritative DNS provider:
@@ -354,7 +451,7 @@ Set public shell variables for read-only checks:
 
 ```sh
 APP_URL=https://budgeting.benknight.dev
-SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+SUPABASE_URL="${SUPABASE_URL:?Set the verified hosted project URL from section 7}"
 
 curl --fail --show-error --silent -I "$APP_URL/"
 curl --fail --show-error --silent -I "$APP_URL/launch-check"
@@ -460,6 +557,7 @@ evidence, then take the first usable encrypted backup.
 - [ ] Real recovery email, redirect, new password, post-recovery MFA, and lost-factor procedure verified.
 - [ ] Matching-major encrypted backup and isolated restoration rehearsed; private storage, cadence, and key custody established.
 - [ ] Configured audited prebuilt artifact deployed to the correct separate Vercel project.
+- [ ] Explicit release activation authorized; GitHub environment restricted to `master`, correct vars/secrets verified, duplicate Vercel Git deployments disabled, and actual release artifact/deployment evidence recorded.
 - [ ] Only budgeting DNS records changed; HTTPS, headers, assets, direct reloads, and production origin verified.
 - [ ] Synthetic CSV/snapshot/category/budget/export/logout workflows pass on mobile and desktop.
 - [ ] No persistent financial/auth browser storage or service worker; no sensitive diagnostics retained.
@@ -477,11 +575,32 @@ appropriate to personal financial data; free-tier availability is not guaranteed
 Back up before schema changes or large imports and periodically repeat a restore
 drill. Refresh container dependencies and rerun validation before releases.
 
-For a bad frontend release, redeploy the retained known-good configured prebuilt
-artifact to the same Vercel project. Do not roll back DNS, disable RLS/MFA, or
-restore financial tables as an automatic response to a frontend problem. Repair
-schema issues with reviewed forward migrations; production data restoration is
-a separate, explicitly controlled incident procedure.
+For a bad frontend release, first unset `BUDGETING_DEPLOY_ENABLED` or set it to
+`false` to prevent future release jobs. This does not cancel an already-running
+publish or revert the currently live site. Inspect the actual Vercel state after
+any publish/smoke failure before retrying.
+
+With explicit owner authorization, use the dedicated project's Vercel dashboard
+rollback/promotion control to select a verified retained known-good deployment.
+Confirm its project, revision, and retained artifact evidence, then repeat unique
+and production URL checks and relevant synthetic acceptance. Record the resulting
+deployment ID/URL and recovery result. Do not rerun stale CI for rollback: stale
+SHAs deliberately fail. Redeploying an archived artifact requires separately
+authorized reviewed tooling and source/checksum verification; rebuilding old source
+does not reproduce the exact artifact. The 30-day GitHub artifact lifetime is not
+a guarantee of Vercel deployment retention or a complete backup strategy.
+
+Rotate the Vercel token by issuing a least-access replacement through trusted
+Vercel administration, replacing the GitHub environment secret securely, and
+revoking the old token. For suspected compromise revoke promptly and investigate
+exposure before re-enabling releases. Rotate the optional automation bypass
+separately when needed. Never print tokens in commands/logs/artifacts. Re-enable
+only after the cause and checks are reviewed.
+
+Do not roll back DNS, disable RLS/MFA/TLS, or restore financial tables as an
+automatic response to a frontend problem. Repair schema issues with reviewed
+forward migrations; database restoration is a separate, explicitly controlled
+incident procedure, never part of frontend rollback.
 
 Keep a private recovery note for project access, encrypted backup/key locations,
 Auth UUID, SMTP configuration, and administrative contacts. Do not put secrets in

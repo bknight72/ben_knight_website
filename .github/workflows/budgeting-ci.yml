@@ -1,10 +1,9 @@
-name: Budgeting Validation
+name: Budgeting Validation and Release
 on:
   pull_request:
     paths: ['budgeting/**', '.devcontainer/**', '.github/workflows/budgeting-*.yml', 'kilo.json', '.gitignore']
   push:
     branches: [master]
-    paths: ['budgeting/**', '.devcontainer/**', '.github/workflows/budgeting-*.yml', 'kilo.json', '.gitignore']
   workflow_dispatch:
 permissions:
   contents: read
@@ -12,8 +11,13 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    concurrency:
+      group: budgeting-validation-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
       - name: Containerized validation and coverage
         run: sh budgeting/scripts/validate.sh
       - name: Package static artifact
@@ -22,13 +26,243 @@ jobs:
         run: |
           sh budgeting/scripts/build-local-browser.sh
           BUDGETING_BROWSER_INTEGRATION=true BUDGETING_BROWSER_ARTIFACT="$GITHUB_WORKSPACE/budgeting/build/local-browser" sh budgeting/supabase/tests/run-local.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: budgeting-static-unconfigured
           path: budgeting/.vercel/output
           include-hidden-files: true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: budgeting-coverage
           path: budgeting/coverage
+
+  release-build:
+    needs: validate
+    if: >-
+      vars.BUDGETING_DEPLOY_ENABLED == 'true' &&
+      github.ref == 'refs/heads/master' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
+      source-sha: ${{ github.sha }}
+    env:
+      SOURCE_SHA: ${{ github.sha }}
+      SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+      STRIPE_ENABLED: 'false'
+      STRIPE_PUBLISHABLE_KEY: ''
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require current master revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          current=$(curl --fail --silent --show-error --max-time 30 \
+            -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/ref/heads/master" | jq -er '.object.sha')
+          if [ "$current" != "$SOURCE_SHA" ]; then
+            printf '%s\n' 'Stale revision: dispatch a new run against current master.' >&2
+            exit 1
+          fi
+      - name: Build configured release and run local browser smoke
+        run: |
+          sh budgeting/scripts/build.sh
+          sh budgeting/scripts/test-release-browser.sh
+      - name: Stage only tested output and release evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release/.vercel
+          cp -a budgeting/.vercel/output release/.vercel/output
+          docker pull denoland/deno:latest
+          vercel_version=$(docker run --rm node:latest sh -c 'npm install --global vercel >&2 && vercel --version')
+          TOOL_VERSIONS=$(
+            docker run --rm --entrypoint flutter budgeting-build:latest --version
+            docker run --rm denoland/deno:latest --version
+            printf 'Vercel %s\n' "$vercel_version"
+            docker version --format 'Docker {{.Server.Version}}'
+            docker image inspect budgeting-build:latest denoland/deno:latest node:latest budgeting-browser:latest \
+              --format '{{.Id}} {{json .RepoDigests}}'
+          )
+          export TOOL_VERSIONS
+          docker run --rm -v "$GITHUB_WORKSPACE:/workspace" -w /workspace \
+            -e SOURCE_SHA -e TOOL_VERSIONS -e GITHUB_RUN_ID -e GITHUB_RUN_ATTEMPT \
+            denoland/deno:latest run --allow-env --allow-read --allow-write \
+            budgeting/scripts/release.ts manifest release
+      - name: Retain immutable release
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: budgeting-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+      - name: Record release evidence
+        env:
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          # shellcheck disable=SC2016 # Markdown backticks are literal formatting.
+          printf '### Budgeting release artifact\n\nRevision: `%s`\n\nArtifact: [%s](%s)\n\nSHA-256: `%s`\n\nConfigured build and local browser smoke passed.\n' \
+            "$SOURCE_SHA" "$ARTIFACT_ID" "$ARTIFACT_URL" "$ARTIFACT_DIGEST" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    needs: [validate, release-build]
+    if: >-
+      vars.BUDGETING_DEPLOY_ENABLED == 'true' &&
+      github.ref == 'refs/heads/master' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    # Configure this environment to allow only master; reviewers are optional.
+    environment:
+      name: budgeting-production
+      url: ${{ vars.BUDGETING_PRODUCTION_URL }}
+    concurrency:
+      group: budgeting-production
+      cancel-in-progress: false
+    env:
+      SOURCE_SHA: ${{ needs.release-build.outputs.source-sha }}
+      SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+      STRIPE_ENABLED: 'false'
+      STRIPE_PUBLISHABLE_KEY: ''
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+      VERCEL_PROJECT_NAME: ${{ vars.VERCEL_PROJECT_NAME }}
+      BUDGETING_PRODUCTION_URL: ${{ vars.BUDGETING_PRODUCTION_URL }}
+    steps:
+      - name: Recheck current master after deployment queue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$SOURCE_SHA" = "$GITHUB_SHA"
+          current=$(curl --fail --silent --show-error --max-time 30 \
+            -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/ref/heads/master" | jq -er '.object.sha')
+          if [ "$current" != "$SOURCE_SHA" ]; then
+            printf '%s\n' 'Stale queued release: dispatch a new run against current master.' >&2
+            exit 1
+          fi
+          test "$BUDGETING_PRODUCTION_URL" = 'https://budgeting.benknight.dev'
+      - name: Checkout trusted verification tooling
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ needs.release-build.outputs.source-sha }}
+          persist-credentials: false
+          sparse-checkout: budgeting
+      - name: Download exact same-run release artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.release-build.outputs.artifact-id }}
+          path: release
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          run-id: ${{ github.run_id }}
+      - name: Verify release checksums and source revision read-only
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/workspace:ro" -w /workspace \
+            denoland/deno:latest run --allow-env --allow-read \
+            budgeting/scripts/release.ts verify release "$SOURCE_SHA"
+      - name: Prepare containerized Vercel tooling without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull -t budgeting-vercel:latest - <<'DOCKERFILE'
+          FROM node:latest
+          LABEL org.opencontainers.image.vendor="Novacoast-VCA-805"
+          RUN npm install --global vercel
+          USER node
+          WORKDIR /release
+          ENTRYPOINT ["vercel"]
+          DOCKERFILE
+          docker run --rm budgeting-vercel:latest --version
+          docker image inspect budgeting-vercel:latest --format '{{.Id}} {{json .RepoDigests}}'
+      - name: Validate target and publish prebuilt output
+        id: publish
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          current=$(curl --fail --silent --show-error --max-time 30 \
+            -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/ref/heads/master" | jq -er '.object.sha')
+          test "$current" = "$SOURCE_SHA" || { printf '%s\n' 'Master advanced during deployment preparation; dispatch current master.' >&2; exit 1; }
+          docker run --rm -v "$GITHUB_WORKSPACE:/workspace:ro" -w /workspace \
+            -e VERCEL_ORG_ID -e VERCEL_PROJECT_ID -e VERCEL_PROJECT_NAME -e VERCEL_TOKEN \
+            denoland/deno:latest run --allow-env --allow-read --allow-net \
+            budgeting/scripts/release.ts target
+          deployment_url=$(docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$GITHUB_WORKSPACE/release:/release" -w /release \
+            -e HOME=/tmp -e CI=true -e VERCEL_ORG_ID -e VERCEL_PROJECT_ID -e VERCEL_TOKEN \
+            --entrypoint sh budgeting-vercel:latest -c \
+            'vercel deploy --prebuilt --prod --yes --token "$VERCEL_TOKEN"')
+          # Reject multiline/foreign output before using it in outputs or smoke checks.
+          if [[ ! "$deployment_url" =~ ^https://${VERCEL_PROJECT_NAME}-[a-z0-9-]+\.vercel\.app$ ]]; then
+            printf '%s\n' 'Vercel did not return one unique HTTPS deployment URL.' >&2
+            exit 1
+          fi
+          deployment_id=$(curl --fail --silent --show-error --max-time 30 \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            "https://api.vercel.com/v13/deployments/${deployment_url#https://}?teamId=$VERCEL_ORG_ID" | \
+            jq -er --arg project "$VERCEL_PROJECT_ID" 'select(.projectId == $project) | .id')
+          [[ "$deployment_id" =~ ^dpl_[a-zA-Z0-9]+$ ]]
+          printf 'url=%s\n' "$deployment_url" >> "$GITHUB_OUTPUT"
+          printf 'id=%s\n' "$deployment_id" >> "$GITHUB_OUTPUT"
+      - name: Verify unique deployment routes assets headers and backend
+        env:
+          BUDGET_BROWSER_URL: ${{ steps.publish.outputs.url }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/workspace:ro" -w /workspace/budgeting \
+            -e RELEASE_ROOT=/workspace/release \
+            -e SUPABASE_URL -e SUPABASE_PUBLISHABLE_KEY -e STRIPE_ENABLED -e STRIPE_PUBLISHABLE_KEY \
+            -e VERCEL_PROJECT_NAME -e BUDGETING_PRODUCTION_URL -e VERCEL_AUTOMATION_BYPASS_SECRET \
+            denoland/deno:latest run --allow-env --allow-read --allow-net \
+            scripts/release.ts smoke "$BUDGET_BROWSER_URL"
+      - name: Verify production routes assets headers and backend
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/workspace:ro" -w /workspace/budgeting \
+            -e RELEASE_ROOT=/workspace/release \
+            -e SUPABASE_URL -e SUPABASE_PUBLISHABLE_KEY -e STRIPE_ENABLED -e STRIPE_PUBLISHABLE_KEY \
+            -e VERCEL_PROJECT_NAME -e BUDGETING_PRODUCTION_URL -e VERCEL_AUTOMATION_BYPASS_SECRET \
+            denoland/deno:latest run --allow-env --allow-read --allow-net \
+            scripts/release.ts smoke "$BUDGETING_PRODUCTION_URL"
+      - name: Verify configured browser startup at both URLs
+        env:
+          DEPLOYMENT_URL: ${{ steps.publish.outputs.url }}
+          BUDGET_HOSTED_SMOKE: 'true'
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          BUDGET_BROWSER_URL="$DEPLOYMENT_URL" sh budgeting/scripts/test-release-browser.sh
+          BUDGET_BROWSER_URL="$BUDGETING_PRODUCTION_URL" sh budgeting/scripts/test-release-browser.sh
+      - name: Record successful production checks
+        env:
+          DEPLOYMENT_URL: ${{ steps.publish.outputs.url }}
+          DEPLOYMENT_ID: ${{ steps.publish.outputs.id }}
+          ARTIFACT_ID: ${{ needs.release-build.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ needs.release-build.outputs.artifact-digest }}
+        run: |
+          # shellcheck disable=SC2016 # Markdown backticks are literal formatting.
+          printf '### Budgeting production release\n\nRevision: `%s`\n\nArtifact ID: `%s`\n\nSHA-256: `%s`\n\nDeployment ID: `%s`\n\nDeployment: %s\n\nProduction: %s\n\nChecksum/revision, authenticated target, routes, headers, assets, backend health, and configured browser checks passed.\n' \
+            "$SOURCE_SHA" "$ARTIFACT_ID" "$ARTIFACT_DIGEST" "$DEPLOYMENT_ID" "$DEPLOYMENT_URL" "$BUDGETING_PRODUCTION_URL" >> "$GITHUB_STEP_SUMMARY"

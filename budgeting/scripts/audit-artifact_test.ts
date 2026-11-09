@@ -18,6 +18,14 @@ Deno.test("artifact audit permits public keys but refuses backend secrets and em
     await import(`${source.href}?case=${crypto.randomUUID()}`);
     await Deno.writeTextFile(
       "build/web/main.dart.js",
+      "sb_secret_synthetic_for_test_only_123456",
+    );
+    await assert.rejects(
+      () => import(`${source.href}?case=${crypto.randomUUID()}`),
+      /credential/,
+    );
+    await Deno.writeTextFile(
+      "build/web/main.dart.js",
       "sk_test_synthetic_for_test_only_123456",
     );
     await assert.rejects(

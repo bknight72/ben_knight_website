@@ -1,15 +1,26 @@
 import { strict as assert } from "node:assert";
 
 // Run inside a container that supplies Playwright and a static artifact server.
-// No test talks to banks or hosted Supabase. Real service integration is separate.
+// Startup only: no login or financial writes. Real service integration is separate.
 const { chromium } = await import("playwright");
 const base = process.env.BUDGET_BROWSER_URL ?? "http://127.0.0.1:8080";
 const target = new URL(base);
+const configured = process.env.BUDGET_CONFIGURED_SMOKE === "true";
+const hosted = process.env.BUDGET_HOSTED_SMOKE === "true";
 assert.ok(
-  ["127.0.0.1", "localhost", "budgeting-web", "host.docker.internal"].includes(
-    target.hostname,
-  ),
-  "Browser tests require a local artifact server",
+  hosted
+    ? configured && target.protocol === "https:" &&
+      (target.origin === "https://budgeting.benknight.dev" ||
+        (/^[a-z0-9-]+\.vercel\.app$/.test(target.hostname) &&
+          /^[a-z0-9-]+$/.test(process.env.VERCEL_PROJECT_NAME ?? "") &&
+          target.hostname.startsWith(`${process.env.VERCEL_PROJECT_NAME}-`))) &&
+      target.href === `${target.origin}/` && !target.username &&
+      !target.password
+    : ["127.0.0.1", "localhost", "budgeting-web", "host.docker.internal"]
+      .includes(
+        target.hostname,
+      ),
+  "Browser smoke requires an approved local or project deployment origin",
 );
 const browser = await chromium.launch({
   headless: true,
@@ -23,10 +34,51 @@ try {
     }, { width: 1000, height: 500 }]
   ) {
     const context = await browser.newContext({ viewport });
+    if (
+      hosted && target.hostname.endsWith(".vercel.app") &&
+      process.env.VERCEL_AUTOMATION_BYPASS_SECRET
+    ) {
+      await context.route(`${target.origin}/**`, (route) =>
+        route.continue({
+          headers: {
+            ...route.request().headers(),
+            "x-vercel-protection-bypass":
+              process.env.VERCEL_AUTOMATION_BYPASS_SECRET,
+          },
+        }));
+    }
     const page = await context.newPage();
     const errors = [];
+    const assetErrors = [];
     page.on("pageerror", (error) => errors.push(error.message));
-    const response = await page.goto(`${base}/private-ledger`, {
+    page.on("response", (response) => {
+      if (
+        response.url().startsWith(`${target.origin}/`) &&
+        response.status() >= 400
+      ) assetErrors.push(response.status());
+    });
+    if (configured) {
+      const asset = await context.request.get(`${target.origin}/main.dart.js`, {
+        maxRedirects: 0,
+        headers: hosted && target.hostname.endsWith(".vercel.app") &&
+            process.env.VERCEL_AUTOMATION_BYPASS_SECRET
+          ? {
+            "x-vercel-protection-bypass":
+              process.env.VERCEL_AUTOMATION_BYPASS_SECRET,
+          }
+          : {},
+      });
+      assert.equal(asset.status(), 200);
+      const js = await asset.text();
+      assert.ok(
+        process.env.SUPABASE_URL && process.env.SUPABASE_PUBLISHABLE_KEY,
+      );
+      assert.ok(
+        js.includes(process.env.SUPABASE_URL) &&
+          js.includes(process.env.SUPABASE_PUBLISHABLE_KEY),
+      );
+    }
+    const response = await page.goto(`${target.origin}/private-ledger`, {
       waitUntil: "networkidle",
     });
     assert.equal(response.status(), 200);
@@ -34,11 +86,18 @@ try {
     await page.evaluate(() =>
       document.querySelector("flt-semantics-placeholder")?.click()
     );
-    await page.getByText("No account or financial data", { exact: false })
+    await page.getByText(
+      configured
+        ? "Sign in to your private workspace."
+        : "No account or financial data",
+      { exact: false },
+    )
       .waitFor({ timeout: 30000 });
     assert.equal(
       await page.locator("flt-semantics").filter({
-        hasText: "No account or financial data",
+        hasText: configured
+          ? "Sign in to your private workspace."
+          : "No account or financial data",
       }).count() > 0,
       true,
     );
@@ -56,7 +115,17 @@ try {
       0,
     );
     await page.reload({ waitUntil: "networkidle" });
+    await page.evaluate(() =>
+      document.querySelector("flt-semantics-placeholder")?.click()
+    );
+    await page.getByText(
+      configured
+        ? "Sign in to your private workspace."
+        : "No account or financial data",
+      { exact: false },
+    ).waitFor({ timeout: 30000 });
     assert.deepEqual(errors, []);
+    assert.deepEqual(assetErrors, []);
     await context.close();
   }
 } finally {

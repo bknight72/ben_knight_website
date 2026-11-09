@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
 cd "$(dirname "$0")/.."
+export STRIPE_ENABLED="${STRIPE_ENABLED:-false}"
+docker run --rm -v "$PWD:/workspace:ro" -w /workspace \
+  -e SUPABASE_URL -e SUPABASE_PUBLISHABLE_KEY -e STRIPE_ENABLED -e STRIPE_PUBLISHABLE_KEY \
+  denoland/deno:latest deno run --allow-env scripts/release.ts preflight
 # Only these public values are embedded. Never pass a backend .env to docker build.
 set -- --target build -t budgeting-build:latest \
   --build-arg "SUPABASE_URL=${SUPABASE_URL:-}" \

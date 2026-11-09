@@ -1,0 +1,241 @@
+import { strict as assert } from "node:assert";
+import {
+  allowedOrigin,
+  manifest,
+  preflight,
+  smoke,
+  target,
+  verify,
+} from "./release.ts";
+
+const env = {
+  SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
+  SUPABASE_PUBLISHABLE_KEY: "sb_publishable_abcdefghijklmnopqrstuvwxyz",
+  STRIPE_ENABLED: "false",
+};
+Deno.test("workflow allows only master pushes and manual release events with gated jobs", async () => {
+  const workflow = await Deno.readTextFile(
+    "../.github/workflows/budgeting-ci.yml",
+  );
+  const events = workflow.split("permissions:")[0];
+  assert.match(events, /push:\s+branches: \[master\]\s+workflow_dispatch:/);
+  assert.doesNotMatch(
+    events,
+    /schedule:|workflow_run:|pull_request_target:|tags:/,
+  );
+  for (const name of ["release-build", "deploy"]) {
+    const job = workflow.split(`\n  ${name}:`)[1].split(/\n  [a-z][a-z-]*:/)[0];
+    assert.match(job, /vars\.BUDGETING_DEPLOY_ENABLED == 'true'/);
+    assert.match(job, /github\.ref == 'refs\/heads\/master'/);
+    assert.match(
+      job,
+      /github\.event_name == 'push' \|\| github\.event_name == 'workflow_dispatch'/,
+    );
+    assert.match(job, /needs:/);
+  }
+  assert.match(
+    workflow,
+    /group: budgeting-production\s+cancel-in-progress: false/,
+  );
+  assert.match(
+    workflow,
+    /artifact-ids: \$\{\{ needs.release-build.outputs.artifact-id \}\}/,
+  );
+  assert.match(workflow, /retention-days: 30/);
+  assert.match(workflow, /Hosted bytes|RELEASE_ROOT=/);
+  for (const action of workflow.matchAll(/uses: (.+)/g)) {
+    assert.match(action[1], /@[a-f0-9]{40}(?:\s|$)/);
+  }
+});
+Deno.test("release preflight accepts only configured CSV release values", () => {
+  preflight(env);
+  for (
+    const patch of [
+      { SUPABASE_URL: "" },
+      { SUPABASE_URL: "http://localhost:54321" },
+      { SUPABASE_URL: `${env.SUPABASE_URL}/path` },
+      { SUPABASE_URL: `${env.SUPABASE_URL}?query=true` },
+      {
+        SUPABASE_URL: "https://user:password@abcdefghijklmnopqrst.supabase.co",
+      },
+      { SUPABASE_PUBLISHABLE_KEY: "" },
+      { SUPABASE_PUBLISHABLE_KEY: "sb_secret_abcdefghijklmnopqrstuvwxyz" },
+      {
+        SUPABASE_PUBLISHABLE_KEY:
+          "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.signature",
+      },
+      { SUPABASE_PUBLISHABLE_KEY: "sb_publishable_your_placeholder_key_here" },
+      { STRIPE_ENABLED: "true" },
+      { STRIPE_PUBLISHABLE_KEY: "pk_test_not_allowed" },
+    ]
+  ) assert.throws(() => preflight({ ...env, ...patch }));
+});
+Deno.test("hosted smoke URL cannot leak bypass credentials to arbitrary origins", () => {
+  assert.throws(() =>
+    allowedOrigin(
+      "https://other-abc.vercel.app",
+      "https://budgeting.benknight.dev",
+      "ledger",
+    )
+  );
+  for (
+    const value of [
+      "https://budgeting.benknight.dev",
+      "https://ledger-abc.vercel.app",
+    ]
+  ) allowedOrigin(value, "https://budgeting.benknight.dev");
+  for (
+    const value of [
+      "http://ledger.vercel.app",
+      "https://evil.test",
+      "https://user:pass@ledger.vercel.app",
+      "https://ledger.vercel.app/path",
+      "https://ledger.vercel.app?query=1",
+    ]
+  ) {
+    assert.throws(() =>
+      allowedOrigin(value, "https://budgeting.benknight.dev")
+    );
+  }
+});
+
+Deno.test("deployment target requires authenticated exact project identity", async () => {
+  const original = globalThis.fetch;
+  const settings = {
+    VERCEL_PROJECT_ID: "prj_synthetic",
+    VERCEL_ORG_ID: "team_synthetic",
+    VERCEL_PROJECT_NAME: "ledger",
+    VERCEL_TOKEN: "synthetic-token",
+  };
+  try {
+    globalThis.fetch = async (url, init) => {
+      assert.equal(new URL(String(url)).hostname, "api.vercel.com");
+      assert.equal(
+        new Headers(init?.headers).get("Authorization"),
+        "Bearer synthetic-token",
+      );
+      return Response.json({
+        id: settings.VERCEL_PROJECT_ID,
+        accountId: settings.VERCEL_ORG_ID,
+        name: settings.VERCEL_PROJECT_NAME,
+      });
+    };
+    await target(settings);
+    globalThis.fetch = async () =>
+      Response.json({
+        id: settings.VERCEL_PROJECT_ID,
+        accountId: settings.VERCEL_ORG_ID,
+        name: settings.VERCEL_PROJECT_NAME,
+        rootDirectory: "budgeting",
+      });
+    await assert.rejects(() => target(settings));
+    await assert.rejects(() => target({ ...settings, VERCEL_TOKEN: "" }));
+    globalThis.fetch = async () => Response.json({ id: "prj_other" });
+    await assert.rejects(() => target(settings));
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+Deno.test("hosted checks verify headers/configuration and isolate protection bypass from backend", async () => {
+  const original = globalThis.fetch;
+  const release = await Deno.makeTempDir();
+  const headers =
+    JSON.parse(await Deno.readTextFile("vercel.json")).headers[0].headers;
+  try {
+    globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      const bypass = new Headers(init?.headers).get(
+        "x-vercel-protection-bypass",
+      );
+      assert.equal(init?.redirect, "error");
+      if (url.hostname.endsWith(".supabase.co")) {
+        assert.equal(bypass, null);
+        return Response.json({ status: "ok", database: "connected" });
+      }
+      assert.equal(bypass, "synthetic-bypass");
+      return new Response(
+        url.pathname.endsWith(".js")
+          ? `${env.SUPABASE_URL} ${env.SUPABASE_PUBLISHABLE_KEY}`
+          : "<html>synthetic</html>",
+        {
+          headers: {
+            ...Object.fromEntries(
+              headers.map((
+                h: { key: string; value: string },
+              ) => [h.key, h.value]),
+            ),
+            "Content-Type": url.pathname.endsWith(".js")
+              ? "application/javascript"
+              : "text/html",
+          },
+        },
+      );
+    };
+    await smoke("https://ledger-abc.vercel.app", {
+      ...env,
+      VERCEL_PROJECT_NAME: "ledger",
+      VERCEL_AUTOMATION_BYPASS_SECRET: "synthetic-bypass",
+    });
+    await Deno.writeTextFile(
+      `${release}/manifest.json`,
+      JSON.stringify({
+        files: { "static/index.html": "not-the-deployed-digest" },
+      }),
+    );
+    await assert.rejects(() =>
+      smoke("https://ledger-abc.vercel.app", {
+        ...env,
+        RELEASE_ROOT: release,
+        VERCEL_AUTOMATION_BYPASS_SECRET: "synthetic-bypass",
+      })
+    );
+    globalThis.fetch = async () =>
+      new Response("wrong", { headers: { "Content-Type": "text/html" } });
+    await assert.rejects(() => smoke("https://ledger-abc.vercel.app", env));
+  } finally {
+    globalThis.fetch = original;
+    await Deno.remove(release, { recursive: true });
+  }
+});
+Deno.test("release manifest verifies exact files and source and rejects mutation", async () => {
+  const root = await Deno.makeTempDir();
+  const sha = "a".repeat(40);
+  try {
+    await Deno.mkdir(`${root}/.vercel/output/static`, { recursive: true });
+    await assert.rejects(() => manifest(root, sha, "synthetic"));
+    await Deno.writeTextFile(
+      `${root}/.vercel/output/config.json`,
+      JSON.stringify({
+        version: 3,
+        routes: [{ headers: { "Cache-Control": "no-store" } }, {
+          handle: "filesystem",
+        }, { dest: "/index.html" }],
+      }),
+    );
+    for (const name of ["index.html", "main.dart.js"]) {
+      await Deno.writeTextFile(
+        `${root}/.vercel/output/static/${name}`,
+        "synthetic",
+      );
+    }
+    await manifest(root, sha, "synthetic");
+    await verify(root, sha);
+    await Deno.writeTextFile(`${root}/vercel.json`, "{}");
+    await assert.rejects(() => verify(root, sha));
+    await Deno.remove(`${root}/vercel.json`);
+    await Deno.writeTextFile(`${root}/.vercel/project.json`, "{}");
+    await assert.rejects(() => verify(root, sha));
+    await Deno.remove(`${root}/.vercel/project.json`);
+    await assert.rejects(() => verify(root, "b".repeat(40)));
+    await Deno.writeTextFile(
+      `${root}/.vercel/output/static/main.dart.js`,
+      "changed",
+    );
+    await assert.rejects(() => verify(root, sha));
+    await Deno.symlink("index.html", `${root}/.vercel/output/static/link`);
+    await assert.rejects(() => manifest(root, sha, "synthetic"));
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});

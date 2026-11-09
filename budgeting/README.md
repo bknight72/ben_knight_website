@@ -45,12 +45,12 @@ Run commands from the repository root unless a block explicitly changes the work
 
 | Variable | Meaning |
 | --- | --- |
-| `SUPABASE_URL` | Public HTTPS project URL; also used by the backend runtime |
-| `SUPABASE_PUBLISHABLE_KEY` | Browser-safe Supabase publishable key, or compatible legacy anon key; never a service-role/secret key |
-| `STRIPE_PUBLISHABLE_KEY` | Optional browser-safe Stripe test/live publishable key matching the backend mode |
-| `STRIPE_ENABLED` | Public build opt-in; defaults to `false` |
+| `SUPABASE_URL` | Release build requires `https://<20 lowercase alphanumeric project-ref>.supabase.co`, with no credentials, port, non-root path, query, or fragment |
+| `SUPABASE_PUBLISHABLE_KEY` | Release build requires `sb_publishable_` followed by at least 20 letters, digits, underscores, or hyphens; no placeholders, legacy JWT anon keys, service-role keys, or secret keys |
+| `STRIPE_PUBLISHABLE_KEY` | Must be empty for the current release build/pipeline |
+| `STRIPE_ENABLED` | Must be `false` for the current release build/pipeline; defaults to `false` |
 
-These values are embedded in public JavaScript. Anyone can read them. `scripts/build.sh` passes only these four values as Docker build arguments. Public `config.yaml` is also shipped in the artifact; it is not a secret store. Frontend Stripe controls require `stripe_enabled: true` in that YAML, `STRIPE_ENABLED=true` at build time, and a publishable key. Backend authorization and enablement remain authoritative; editing public YAML cannot grant access.
+These values are embedded in public JavaScript. Anyone can read them. `scripts/build.sh` runs containerized `release.ts preflight` before compilation and passes only these four values as Docker build arguments. Key-shape validation cannot prove that a key belongs to the selected project: verify both values in the intended Supabase project's settings. Application-level legacy anon-key support is unchanged, but the release path deliberately requires the new publishable format. Public `config.yaml` also ships in the artifact; it is not a secret store. Future Stripe enablement requires separately reviewed release changes and launch approval, not merely changing a variable. Backend authorization remains authoritative; public YAML cannot grant access.
 
 ### Backend And Administration
 
@@ -91,7 +91,7 @@ The editor and container must share the same package cache path. Do not edit or 
 sh budgeting/scripts/validate.sh
 ```
 
-The validation entrypoint builds the Flutter tooling image, resolves packages in Docker, checks formatting, analyzes Flutter, runs unit/widget coverage and its gate, and builds an unconfigured release web app. It then runs browser-bridge tests, packager/artifact-audit tests, the exact backend `supabase/tests/run-deno.sh` runner, disposable PostgreSQL checks, browser-artifact checks, non-root static runtime health/graceful-stop checks, and the offline encrypted recovery drill. It stops at the first failure; later checks are not evidence of execution if Flutter or an earlier step fails. The actual local Supabase stack harness remains separately invokable below and is a separate CI step. It does not contact live banks. The Tests section records completed local verification; hosted acceptance remains a separate gate.
+The validation entrypoint builds the Flutter tooling image, resolves packages in Docker, checks formatting, analyzes Flutter, runs unit/widget coverage and its gate, and builds an unconfigured release web app. It then runs browser-bridge tests, release-preflight/manifest/verification tests, packager/artifact-audit tests, the exact backend `supabase/tests/run-deno.sh` runner, disposable PostgreSQL checks, browser-artifact checks, non-root static runtime health/graceful-stop checks, and the offline encrypted recovery drill. It stops at the first failure; later checks are not evidence of execution if Flutter or an earlier step fails. The actual local Supabase stack harness remains separately invokable below and is a separate CI step. It does not contact live banks. Historical results in Tests do not establish results for the current revision; hosted acceptance remains a separate gate.
 
 For a TLS-inspecting network, use an absolute path to the operator-approved public CA:
 
@@ -104,13 +104,14 @@ The CA is supplied using a BuildKit secret and a read-only runtime mount for val
 Build a public-configured release artifact separately:
 
 ```sh
-SUPABASE_URL=https://your-project.supabase.co \
-SUPABASE_PUBLISHABLE_KEY=your-public-key \
+SUPABASE_URL="${SUPABASE_URL:?Set the verified hosted project URL}" \
+SUPABASE_PUBLISHABLE_KEY="${SUPABASE_PUBLISHABLE_KEY:?Set its browser publishable key}" \
 STRIPE_ENABLED=false \
+STRIPE_PUBLISHABLE_KEY= \
 sh budgeting/scripts/build.sh
 ```
 
-Add `BUILD_CA_FILE=/absolute/path/to/public-ca.crt` to this invocation if required. Do not pass a backend environment file to `docker build`. Output is `budgeting/build/web/`, then the script packages `budgeting/.vercel/output/`. A build with empty public values intentionally shows an unconfigured screen and must not be mistaken for a configured production app.
+Set the two public shell values from the intended project before this command; placeholder values will fail preflight. Add `BUILD_CA_FILE=/absolute/path/to/public-ca.crt` if required. Do not pass a backend environment file to `docker build`. Output is `budgeting/build/web/`, then the script packages `budgeting/.vercel/output/`. Empty public values fail `build.sh`; intentional unconfigured builds belong to `validate.sh` and must never be released. After a configured build, run `sh budgeting/scripts/test-release-browser.sh` to smoke-test the packaged output locally without logging in or writing hosted data.
 
 Repackage an already-built artifact without recompilation:
 
@@ -126,9 +127,9 @@ The Dockerfile also has a non-root nginx runtime on port 8080. Build it with the
 
 ```sh
 docker build --target runtime -t budgeting-runtime:latest \
-  --build-arg SUPABASE_URL=https://your-project.supabase.co \
-  --build-arg SUPABASE_PUBLISHABLE_KEY=your-public-key \
-  --build-arg STRIPE_ENABLED=false budgeting
+  --build-arg "SUPABASE_URL=${SUPABASE_URL:?Set the verified hosted project URL}" \
+  --build-arg "SUPABASE_PUBLISHABLE_KEY=${SUPABASE_PUBLISHABLE_KEY:?Set its browser publishable key}" \
+  --build-arg STRIPE_ENABLED=false --build-arg STRIPE_PUBLISHABLE_KEY= budgeting
 docker run --rm --name budgeting-local -p 8080:8080 budgeting-runtime:latest
 ```
 
@@ -136,7 +137,7 @@ The static `/health` endpoint reports frontend liveness only, not database avail
 
 ## Tests
 
-Latest local verification: Flutter analysis passed, 57 Flutter tests passed with 89.0% conservative whole-library coverage, 27 backend tests passed with 88.15% fixed-production coverage, and 7 browser bridge tests passed. Release compilation, Chromium artifact smoke checks at three viewports under CSP, non-root runtime liveness/graceful stop, static credential audit, and Vercel packaging passed. Database authorization/concurrency/usage/lease tests and the offline encrypted recovery drill passed. These are local results, not hosted deployment or live-bank verification; rerun the commands against changes and consult the final handoff for remaining integration limits.
+Historical local verification recorded on 2026-11-06: Flutter analysis passed, 57 Flutter tests passed with 89.0% conservative whole-library coverage, 27 backend tests passed with 88.15% fixed-production coverage, and 7 browser bridge tests passed. Release compilation, Chromium artifact smoke checks at three viewports under CSP, non-root runtime liveness/graceful stop, static credential audit, and Vercel packaging passed. Database authorization/concurrency/usage/lease tests and the offline encrypted recovery drill passed. These are historical local results, not results for the new release pipeline, hosted deployment, or live-bank verification; rerun the commands against changes and consult the final handoff for remaining integration limits.
 
 Signed-in Chromium-to-Supabase acceptance passed locally twice on 2026-11-06 (23:15:34Z and 23:23:05Z, both exit 0) against real disposable stacks with synthetic data and no host-published ports. The harness waits for Flutter's focused accessibility input to activate its editing handlers before filling, matches MFA response paths independently of query strings, and targets merged account-card accessibility names. It verifies real password login, TOTP, dashboard fixture data, a manual account persisted through PostgREST with the correct owner, sign-out financial clearing, empty local storage, no service workers, and no browser runtime errors. No Auth or financial requests are mocked. Owned test services and isolated daemon state were removed afterward. This does not establish hosted acceptance, browser password-recovery completion, or live bank support. The editor devcontainer configuration also remains unverified in the VS Code client until reopened in the container.
 
@@ -184,7 +185,7 @@ The required coverage threshold is at least 70% executable lines separately for 
 
 The backend command above is the authoritative fixed-production-scope runner. `supabase/tests/run-deno.sh` type-checks all three entrypoints, runs the Deno tests with coverage, writes `/tmp/budgeting-coverage/lcov.info` inside its container, and invokes `supabase/tests/check_coverage.ts`. That checker discovers **every** `functions/**/*.ts` file and counts only their executable LCOV lines, excluding test source. The current nine files are `_shared/core.ts`, `_shared/runtime.ts`, `_shared/openapi.ts`, and `handler.ts` plus `index.ts` under each of `api/`, `worker/` and `stripe-webhook/`. Entrypoint tests execute actual registration with `Deno.serve` intercepted rather than excluding those modules. Missing/empty production records or aggregate coverage below 70% fail. `validate.sh` also copies the backend LCOV to `budgeting/coverage/backend.lcov` and runs the root checker. Standalone `docker run --rm` discards its temporary report unless explicitly copied out. Browser bridge checks are behavioral tests, not a claim of instrumented JS coverage. Do not improve reported coverage by excluding difficult UI/auth/worker code or unexecuted production modules.
 
-GitHub validation is in `.github/workflows/budgeting-ci.yml`, scoped to budgeting/security/workflow changes on pull requests and pushes to `master`, with manual runs. Its unconfigured artifact is not a production deployment. The portfolio workflow remains separate. For GitLab, select `budgeting/.gitlab-ci.yml` as the CI configuration path, enable the instance runner under Settings > CI/CD > Runners, and provide a trusted shell runner with local Docker tagged `shared`; rules cover merge requests and `main`/`master`. A remote Docker-in-Docker daemon cannot resolve the scripts' checkout bind paths. Creating a mirror, enabling runners, and protected secrets are operator tasks, not actions performed by this README.
+GitHub's `Budgeting Validation and Release` workflow is `.github/workflows/budgeting-ci.yml`: relevant budgeting/security/workflow pull requests validate only, every push to `master` validates without a path filter, and manual runs are available. Its unconfigured artifact is not deployable production output. Release policy and activation are below; the portfolio workflow remains separate. For GitLab, select `budgeting/.gitlab-ci.yml` as the CI configuration path, enable the instance runner under Settings > CI/CD > Runners, and provide a trusted shell runner with local Docker tagged `shared`; rules cover merge requests and `main`/`master`. A remote Docker-in-Docker daemon cannot resolve the scripts' checkout bind paths. GitLab validation is not this GitHub release pipeline. Creating a mirror, enabling runners, and protected secrets are operator tasks, not actions performed by this README.
 
 Launch follow-up on 2026-11-06:
 
@@ -223,7 +224,7 @@ For a lost factor, a trusted Supabase administrator must independently verify th
 
 ## API Reference
 
-Let `SUPABASE_URL` be `https://your-project.supabase.co`. The Edge API base is **`$SUPABASE_URL/functions/v1/api`**, not the frontend domain. Anonymous endpoints are:
+Let `SUPABASE_URL` be the verified hosted origin described under Public Build Values. The Edge API base is **`$SUPABASE_URL/functions/v1/api`**, not the frontend domain. Anonymous endpoints are:
 
 | Method / Path Under Edge Base | Purpose |
 | --- | --- |
@@ -263,20 +264,42 @@ To pause safely, disable new frontend/backend linking and refresh, then stop the
 
 ## Deployment
 
-### Manual Prebuilt Vercel Deploy
+### Gated Prebuilt Releases
 
-Build and validate a release for the intended isolated backend first. Review `budgeting/.vercel/output/config.json` and static assets for correct public configuration and absence of privileged keys. Keep a prior artifact for rollback. `vercel.json` no-op install/build settings are not a source-build deployment pipeline; do not connect an automatic source deployment that publishes an empty/stale artifact.
+For this artifact-only pipeline, leave the dedicated Vercel project's **Root
+Directory empty**, not `budgeting`. GitHub builds the budgeting package, but
+Vercel CLI receives only the staged release directory. A nonempty remote root
+would point inside that artifact directory; target verification rejects it.
+This replaces the root-directory advice for a repository-based Vercel import.
 
-After separate deployment authorization, use a private deployment-only environment file containing `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID`. The CLI and its dependencies are installed only in the disposable container:
+Hosted smoke also verifies HTML/JavaScript SHA-256 against the retained artifact,
+so a prior release with the same public configuration cannot masquerade as the
+new release. For local configured smoke, export the same public build values
+and optional `BUILD_CA_FILE` before invoking `test-release-browser.sh`.
 
-```sh
-docker run --rm \
-  --env-file /absolute/private/path/vercel.env \
-  -v "$PWD/budgeting:/workspace" -w /workspace \
-  node:latest sh -ec 'npx --yes vercel deploy --prebuilt --prod --token "$VERCEL_TOKEN"'
-```
+Release jobs are disabled unless repository variable `BUDGETING_DEPLOY_ENABLED` is exactly `true`; leave it unset during implementation and platform setup. Approval of code is not authorization to activate or publish. Configure these values securely in GitHub, not in backend `.env` files:
 
-This is a remote production action, not a validation command. Omit `--prod` for an explicitly approved isolated preview. The mounted directory must already contain `.vercel/output/`; do not run `vercel build` on the host or upload source/backend secrets. Use protected/manual CI environments if automating this command later, and never expose production credentials to fork pull requests. Verify the deployed artifact's static-file precedence, deep-link/recovery reloads, no-store/noindex headers, CanvasKit/workers, TOTP QR, Stripe frames/scripts and absence of service-worker financial caching on the real Vercel edge.
+| Location | Setting | Required value / purpose |
+| --- | --- | --- |
+| Repository variable | `BUDGETING_DEPLOY_ENABLED` | Unset/anything other than exact `true` means validation only |
+| Repository variable | `SUPABASE_URL` | Verified hosted origin satisfying release preflight |
+| Repository variable | `SUPABASE_PUBLISHABLE_KEY` | Matching browser-safe `sb_publishable_...` key |
+| `budgeting-production` environment variable | `VERCEL_ORG_ID` | Verified dedicated account/team ID |
+| Same environment variable | `VERCEL_PROJECT_ID` | Verified dedicated budgeting project ID |
+| Same environment variable | `VERCEL_PROJECT_NAME` | Exact existing project name, lowercase letters/digits/hyphens |
+| Same environment variable | `BUDGETING_PRODUCTION_URL` | Exactly `https://budgeting.benknight.dev` |
+| Same environment secret | `VERCEL_TOKEN` | Least-access practical deployment token |
+| Same environment secret, optional | `VERCEL_AUTOMATION_BYPASS_SECRET` | Approved automation bypass for protected unique deployment smoke only |
+
+Restrict `budgeting-production` deployments to `master` in GitHub environment settings. Required reviewers are optional where supported; the branch restriction is mandatory. The workflow cannot configure this platform control for you. Disable duplicate Vercel Git deployments using the dedicated project's supported Git deployment control, not by disconnecting the portfolio/shared integration. Keep `vercel.json` prebuilt-only: its no-op install/build settings are not a source-build pipeline.
+
+After explicit activation authorization, every `master` push/merge is eligible, including documentation-only changes. Manual dispatch must select current `master`; re-runs can release only while their SHA is still current. Freshness is checked before building and again after the serialized deployment queue; stale runs fail and require a new dispatch against current `master`. PRs (including forks), other branches/tags, previews, schedules, and daily container rebuilds do not release. Concurrent validation may be canceled, but production publishing uses a fixed group with `cancel-in-progress: false`. GitHub does not guarantee FIFO ordering and may supersede pending releases.
+
+`release-build` requires successful validation, both independent 70% coverage gates, and real disposable Supabase/browser integration. It runs `build.sh` with public values and Stripe disabled, then the configured local browser smoke. It stages only `release/.vercel/output` and `manifest.json`, outside the served static tree. The manifest records source SHA, run/attempt, build time, resolved tool versions/image evidence, and per-file SHA-256 checksums. The immutable `budgeting-release-<run>-<attempt>` artifact includes hidden output, fails if missing, and is retained 30 days. Artifact access follows repository permissions; all contents must be browser-safe, even in a private repository. Do not upload source, `.env`, backend secrets, `build/local-browser`, or the unconfigured validation artifact as a release.
+
+`deploy` depends on validation and that build, uses a fresh trusted-SHA checkout, downloads the exact same-run artifact ID, and verifies its source/checksums with read-only tooling. It does not execute artifact-provided scripts or rebuild. `release.ts target` authenticates and verifies existing Vercel project/account/name before containerized `vercel deploy --prebuilt --prod`; it must not create/relink a project. The Vercel token is available only to that publish step, not dependency installation, release build, or smoke tests. Tool dependencies are installed only in containers. Actions use full commit SHAs; default token access is read-only, with `actions: read` added only for deployment artifact access and checkout credentials not persisted.
+
+The workflow captures the unique project deployment URL/ID, then checks that URL and the exact production URL for HTTPS root, extensionless reload, JS content type/configuration, expected security/no-store headers, healthy backend JSON including database connectivity, and configured browser startup. HTTP checks retry with bounds; smoke checks do not log in or perform financial writes. The optional protection-bypass secret is supplied only to smoke steps, scoped to the unique Vercel origin, never to the backend or canonical production origin. Do not disable Deployment Protection to pass CI. Summaries retain revision, artifact ID/digest, deployment links/ID, and check results. These checks do not replace section 10 of the runbook: owner/MFA denial, SMTP recovery, synthetic financial flows, and backup readiness remain separate launch gates. No new test or hosted acceptance result is asserted here.
 
 ### DNS And External Gates
 
@@ -288,7 +311,9 @@ This is a remote production action, not a validation command. Omit `--prod` for 
 
 ### Rollback
 
-Redeploy the last known-good static artifact without overwriting financial data. Pause new linking/refresh work and scheduler as appropriate, but explicitly stop recurring subscriptions/disconnect when abandoning syncing. Use forward corrective SQL migrations rather than deleting migration history. Database restore is a separately controlled recovery event, not an automatic deployment rollback.
+First unset `BUDGETING_DEPLOY_ENABLED` (or set it to `false`) to prevent future release jobs; this does not cancel an already-running publish or undo a live deployment. A post-publish smoke failure fails CI but can leave the new release live: inspect Vercel before retrying. With explicit owner authorization, use the dedicated project's Vercel dashboard rollback/promotion control to select a verified retained known-good deployment, then repeat unique/production smoke and launch-relevant checks. Record the resulting deployment and revision. Do not rerun stale CI to roll back; it is deliberately rejected. An archived artifact may be redeployed only through separately authorized, reviewed tooling after checksum/source verification; rebuilding old source is not the same artifact. Artifacts expire after 30 days, so retain required recovery evidence securely before expiry.
+
+Rotate/revoke a compromised Vercel token in Vercel and replace only the environment secret; rotate the optional bypass separately and never log either value. Re-enable releases only after cause and checks are reviewed. Do not overwrite financial data, change DNS, or weaken RLS/MFA/TLS during frontend rollback. Pause linking/refresh and schedules as appropriate, but explicitly stop recurring subscriptions/disconnect when abandoning syncing. Use forward corrective SQL migrations; database restore is a separately controlled recovery event, never an automatic frontend rollback.
 
 ## Backup And Recovery
 
