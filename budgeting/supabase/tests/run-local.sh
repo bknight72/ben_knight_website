@@ -2,13 +2,17 @@
 set -eu
 # Run on the host; dependencies and the Supabase CLI run only in containers.
 # Local-only and disposable: refuses pre-existing project containers to protect operator data.
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 EXISTING=$(docker ps -a --filter name=_private-budgeting --format '{{.Names}}')
 if [ -n "$EXISTING" ]; then
   printf '%s\n' 'Refusing existing private-budgeting stack. Stop it explicitly before a fresh isolated run.' >&2
   exit 1
 fi
 set --
+case "${BUDGETING_MOCK_STRIPE:-false}" in
+  true|false) ;;
+  *) printf '%s\n' 'BUDGETING_MOCK_STRIPE must be true or false' >&2; exit 1 ;;
+esac
 if [ -n "${BUDGETING_CA_CERT:-}" ]; then
   set -- --secret "id=corporate_ca,src=$BUDGETING_CA_CERT"
 fi
@@ -35,7 +39,7 @@ if [ "${BUDGETING_BROWSER_INTEGRATION:-false}" = true ]; then
     -e BUDGETING_BROWSER_INTEGRATION=true -e LOCAL_BROWSER_FIXTURE=/run/budgeting-browser/fixture.json \
     -e "LOCAL_BROWSER_VOLUME=$VOLUME" -e "LOCAL_BROWSER_ARTIFACT=$ARTIFACT" -e "LOCAL_BROWSER_SERVER=budgeting-auth-browser-$$"
 fi
-docker run --rm --network host \
+docker run --rm --network host -e "BUDGETING_MOCK_STRIPE=${BUDGETING_MOCK_STRIPE:-false}" \
   "$@" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$ROOT:$ROOT" -w "$ROOT" \

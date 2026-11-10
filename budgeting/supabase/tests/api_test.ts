@@ -41,6 +41,7 @@ class MockDB extends Database {
         owner_id: owner,
         account_id: account,
         livemode: false,
+        customer_id: "cus_synthetic",
       };
     }
     if (op === "import") {
@@ -207,7 +208,13 @@ Deno.test("worker persists every page and resumes from cursor without replaying 
     live: false,
     call: async (_path: string, _method: string, p: any) => {
       if (_path.startsWith("financial_connections/accounts/")) {
-        return { transaction_refresh: { status: "succeeded" } };
+        return {
+          livemode: false,
+          status: "active",
+          account_holder: { customer: "cus_synthetic" },
+          permissions: ["balances", "transactions"],
+          transaction_refresh: { status: "succeeded" },
+        };
       }
       params.push(p);
       count++;
@@ -249,6 +256,10 @@ Deno.test("worker pagination yields without exhausting failure attempts and reta
   const stripe = {
     live: false,
     call: async () => ({
+      livemode: false,
+      status: "active",
+      account_holder: { customer: "cus_synthetic" },
+      permissions: ["balances", "transactions"],
       data: [],
       has_more: false,
       transaction_refresh: { status: "succeeded" },
@@ -267,11 +278,15 @@ Deno.test("balance webhook worker only reads, reserved paid refresh uses permane
   const calls: any[] = [];
   const stripe = {
     live: false,
+    requireActivity: () => {},
     call: async (...args: any[]) => {
       calls.push(args);
       return {
         status: "active",
-        balance: null,
+        livemode: false,
+        account_holder: { customer: "cus_synthetic" },
+        permissions: ["balances", "transactions"],
+        balance: { current: { usd: 100 }, as_of: 1793830636 },
         balance_refresh: { status: "succeeded", next_refresh_available_at: 1 },
       };
     },

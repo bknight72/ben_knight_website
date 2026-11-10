@@ -16,7 +16,7 @@ export async function handle(
     if (req.method !== "POST") {
       throw new ApiError(405, "method_not_allowed", "Use POST.");
     }
-    const stripe = new Stripe();
+    const stripe = new Stripe(fetch, true);
     const secret = env("STRIPE_WEBHOOK_SECRET");
     if (!secret) {
       throw new ApiError(
@@ -40,7 +40,9 @@ export async function handle(
     const kinds: Record<string, string> = {
       "financial_connections.account.refreshed_transactions": "sync",
       "financial_connections.account.refreshed_balance": "balance",
-      "financial_connections.account.disconnected": "disconnect",
+      "financial_connections.account.disconnected": "lifecycle",
+      "financial_connections.account.deactivated": "lifecycle",
+      "financial_connections.account.reactivated": "lifecycle",
     };
     const kind = kinds[event.type];
     if (!kind) return json({ received: true, ignored: true });

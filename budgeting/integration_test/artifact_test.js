@@ -7,6 +7,19 @@ const base = process.env.BUDGET_BROWSER_URL ?? "http://127.0.0.1:8080";
 const target = new URL(base);
 const configured = process.env.BUDGET_CONFIGURED_SMOKE === "true";
 const hosted = process.env.BUDGET_HOSTED_SMOKE === "true";
+const stripeEnabled = process.env.STRIPE_ENABLED ?? "false";
+const stripeKey = process.env.STRIPE_PUBLISHABLE_KEY ?? "";
+assert.ok(
+  ["true", "false"].includes(stripeEnabled),
+  "Invalid Stripe enablement; values withheld",
+);
+assert.ok(
+  stripeEnabled === "true"
+    ? /^pk_live_[A-Za-z0-9]{20,}$/.test(stripeKey) &&
+      !/placeholder|your|example|replace/i.test(stripeKey)
+    : stripeKey === "",
+  "Invalid public Stripe configuration; values withheld",
+);
 assert.ok(
   hosted
     ? configured && target.protocol === "https:" &&
@@ -75,6 +88,35 @@ try {
       assert.ok(
         js.includes(process.env.SUPABASE_URL) &&
           js.includes(process.env.SUPABASE_PUBLISHABLE_KEY),
+      );
+      assert.ok(
+        stripeEnabled === "true"
+          ? js.includes(stripeKey)
+          : !/pk_(?:live|test)_/.test(js),
+        "Artifact Stripe key mismatch; values withheld",
+      );
+      const evidence = await context.request.get(
+        `${target.origin}/release-config.json`,
+        {
+          maxRedirects: 0,
+          headers: hosted && target.hostname.endsWith(".vercel.app") &&
+              process.env.VERCEL_AUTOMATION_BYPASS_SECRET
+            ? {
+              "x-vercel-protection-bypass":
+                process.env.VERCEL_AUTOMATION_BYPASS_SECRET,
+            }
+            : {},
+        },
+      );
+      assert.equal(evidence.status(), 200);
+      assert.ok(
+        JSON.stringify(await evidence.json()) === JSON.stringify({
+          supabaseUrl: process.env.SUPABASE_URL,
+          supabasePublishableKey: process.env.SUPABASE_PUBLISHABLE_KEY,
+          stripeEnabled: stripeEnabled === "true",
+          stripePublishableKey: stripeKey,
+        }),
+        "Artifact public configuration evidence mismatch; values withheld",
       );
     }
     const response = await page.goto(`${target.origin}/private-ledger`, {

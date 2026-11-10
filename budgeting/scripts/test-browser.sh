@@ -16,4 +16,5 @@ docker run -d --name "$name" --user nginx --read-only \
   --entrypoint nginx nginx:latest -g 'daemon off;' >/dev/null
 # Shared network namespace avoids fixed ports or host service dependencies.
 docker run --rm --network "container:$name" -e BUDGET_BROWSER_URL=http://127.0.0.1:8080 \
-  -e BUDGET_CONFIGURED_SMOKE -e SUPABASE_URL -e SUPABASE_PUBLISHABLE_KEY budgeting-browser:latest
+  -e BUDGET_CONFIGURED_SMOKE -e SUPABASE_URL -e SUPABASE_PUBLISHABLE_KEY \
+  -e STRIPE_ENABLED -e STRIPE_PUBLISHABLE_KEY budgeting-browser:latest

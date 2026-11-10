@@ -271,12 +271,15 @@ export async function verifyWebhook(
 
 export function stripeMode(
   env: (key: string) => string | undefined,
+  cleanup = false,
 ): { enabled: boolean; live: boolean } {
-  if (env("STRIPE_ENABLED") !== "true") return { enabled: false, live: false };
+  if (!cleanup && env("STRIPE_ENABLED") !== "true") {
+    return { enabled: false, live: false };
+  }
   const mode = env("STRIPE_MODE"), key = env("STRIPE_SECRET_KEY") || "";
   if (
     !["test", "live"].includes(mode || "") ||
-    !key.startsWith(mode === "live" ? "sk_live_" : "sk_test_")
+    !new RegExp(`^(sk|rk)_${mode}_[A-Za-z0-9]+$`).test(key)
   ) {
     throw new ApiError(
       503,
@@ -291,7 +294,7 @@ export function stripeMode(
       "Live Stripe access has not been authorized.",
     );
   }
-  return { enabled: true, live: mode === "live" };
+  return { enabled: env("STRIPE_ENABLED") === "true", live: mode === "live" };
 }
 export function reportingDate(seconds: number): string {
   if (!Number.isSafeInteger(seconds)) invalid("Invalid provider timestamp.");

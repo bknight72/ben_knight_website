@@ -1,4 +1,5 @@
-// Actual local Auth, MFA, PostgREST and deployed Edge Runtime interactions. No mock fetches.
+import { stripeIntegration } from "./local-stripe-integration.ts";
+// Actual local Auth, MFA, PostgREST and Edge Runtime; optional Stripe-only HTTP boundary.
 const base = Deno.env.get("LOCAL_SUPABASE_URL") ||
   "http://host.docker.internal:54321";
 if (
@@ -242,6 +243,9 @@ assert(
   ),
   "Password recovery email was not captured locally",
 );
+if (Deno.env.get("BUDGETING_MOCK_STRIPE") === "true") {
+  await stripeIntegration(call, token, low.access_token, wrong.access_token);
+}
 await call("/auth/v1/logout", token, "POST", undefined, 204);
 const forged = token.split(".");
 const claims = JSON.parse(
@@ -312,6 +316,7 @@ if (
       totpSecret: factor.totp.secret,
       supabaseUrl: base,
       publishableKey: anon,
+      mockStripe: Deno.env.get("BUDGETING_MOCK_STRIPE") === "true",
     }),
     { mode: 0o600 },
   );

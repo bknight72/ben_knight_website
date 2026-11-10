@@ -1,8 +1,8 @@
-# CSV Production Launch Runbook
+# Budgeting Production Runbook
 
 This runbook takes the private budgeting app from validated local code to
 `https://budgeting.benknight.dev`. Launch CSV imports and manual snapshots first.
-Stripe Financial Connections is a separate, optional milestone.
+Stripe Financial Connections is a separate, owner-operated opt-in described in section 13.
 
 Writing this guide does not perform or authorize hosted changes. Project creation,
 remote SQL, deployments, DNS edits, subscriptions, and live bank access require
@@ -11,7 +11,7 @@ bank records, recovery links, or TOTP seeds in chat or Git.
 
 ## 1. Current Status And Launch Gates
 
-As of 2026-11-06:
+Historical baseline as of 2026-11-06 (not a current hosted-state assertion):
 
 | Item | Evidence / remaining work |
 | --- | --- |
@@ -23,7 +23,7 @@ As of 2026-11-06:
 | Supabase / Vercel / DNS | No hosted setup or production deployment established by repository tests |
 | Recovery | Offline encrypted drill passes; hosted PostgreSQL-major compatibility and private backup custody remain unresolved |
 | VS Code | Container setup resolves both packages; actual editor use inside the Dev Container remains unverified |
-| Stripe | Keep disabled throughout CSV launch |
+| Stripe | Defaults remain disabled; owner chose live-first on November 10 and reports balances/transactions approval; live acceptance is still unverified |
 
 The browser-harness fixes and documentation must be included in the revision
 you intend to launch. The original portfolio widget suite also has known failures
@@ -139,6 +139,12 @@ files in this order:
 
 1. `budgeting/supabase/migrations/202611040001_budgeting.sql`
 2. `budgeting/supabase/migrations/202611050001_usage_and_worker_hardening.sql`
+3. `budgeting/supabase/migrations/202611100001_stripe_linking_lifecycle.sql` for the reviewed live-linking release, before updated functions/frontend
+
+For an existing two-migration deployment apply only the new forward migration,
+after backup/review; do not rerun the first two files. Preserve old-frontend
+compatibility and disable new linking during the upgrade. Never substitute a
+test bootstrap or let release CI apply/repair migrations.
 
 Review the selected project before executing. Record success and migration
 history privately. Never apply `tests/bootstrap.sql` to managed Supabase. Do not
@@ -328,7 +334,13 @@ must use `sb_publishable_` plus at least 20 letters, digits, underscores, or
 hyphens, without placeholder markers. Legacy JWT anon keys are not accepted by
 this release path, even though application compatibility remains. Shape checks
 cannot prove project/key ownership: confirm the pair in Supabase settings.
-Stripe must be `false` with an empty Stripe publishable key. Empty/unconfigured
+Stripe defaults to `false` with an empty publishable key. Approved live opt-in
+requires exact `STRIPE_ENABLED=true` and `pk_live_` followed by at least 20
+alphanumeric characters, with no placeholder markers. Secret/restricted keys,
+test keys, whitespace and malformed values are rejected with redacted errors.
+The bundled YAML permits the capability, but cannot enable it without the build
+flag/key and independent backend gates. See section 13 before live activation.
+Empty/unconfigured
 builds are intentionally supported by `validate.sh` only, not `build.sh`.
 
 The script replaces `budgeting/build/web`, audits the static artifact, and packages
@@ -337,7 +349,8 @@ does not display the safe unconfigured screen. Do not deploy
 `build/local-browser`, which embeds disposable localhost configuration.
 
 Run `sh budgeting/scripts/test-release-browser.sh` after a configured local build
-with the same `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` exported (and
+with the same `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `STRIPE_ENABLED`, and
+`STRIPE_PUBLISHABLE_KEY` exported (and
 `BUILD_CA_FILE` if needed) to exercise startup and packaged assets without hosted
 login or financial writes. Values assigned only before the build command are not
 automatically retained for a subsequent smoke command.
@@ -358,6 +371,8 @@ Configure the following through GitHub settings, never tracked files or chat:
 | Repository variable | `BUDGETING_DEPLOY_ENABLED` | Unset initially; exact `true` enables release jobs |
 | Repository variable | `SUPABASE_URL` | Verified production-shaped hosted project origin from section 7 |
 | Repository variable | `SUPABASE_PUBLISHABLE_KEY` | Matching browser-safe publishable key |
+| Repository variable | `STRIPE_ENABLED` | Unset defaults false; exact `true` opts in only after section 13 readiness |
+| Repository variable | `STRIPE_PUBLISHABLE_KEY` | Empty when disabled; matching live public `pk_live_...` key when enabled |
 | `budgeting-production` environment variable | `SUPABASE_PROJECT_REF` | Exact hosted project ref matching repository `SUPABASE_URL` without trailing slash |
 | Same environment secret | `SUPABASE_ACCESS_TOKEN` | Supabase account token with project-read and function-deploy access, not the publishable/service-role key |
 | `budgeting-production` environment variable | `VERCEL_ORG_ID` | Verified account/team identifier |
@@ -434,7 +449,13 @@ included; missing files fail upload. Retention is 30 days and access follows
 repository permissions, so all contents must be browser-safe. Never substitute
 the unconfigured validation artifact or `build/local-browser`. The manifest
 records source SHA, run/attempt, build time, resolved tool versions and image
-evidence as available, plus per-file checksums. Keep necessary nonsensitive
+evidence as available, public configuration identity, plus per-file checksums.
+`build.sh` emits only public values in static `release-config.json`; local and
+hosted browser smoke compare that evidence and compiled key identity to intended
+settings. Deploy verifies both static evidence and manifest against its current
+public settings before backend changes. Changing repository variables between
+jobs fails closed; dispatch a new current-master run, never patch the artifact.
+Keep necessary nonsensitive
 recovery evidence securely before artifacts expire.
 
 Deploy uses a fresh checkout of the trusted SHA and downloads the exact same-run
@@ -581,7 +602,7 @@ evidence, then take the first usable encrypted backup.
 ## 11. Go / No-Go Checklist
 
 - [ ] Final release commit includes reviewed browser-harness fixes; both GitHub workflows pass on that revision.
-- [ ] Dedicated Supabase project, correct region/plan, and both migrations applied successfully.
+- [ ] Dedicated Supabase project, correct region/plan, and all reviewed forward migrations applied successfully.
 - [ ] Public signup disabled; `private` not exposed; confirmed owner mapping and TOTP operational.
 - [ ] Production Edge functions/secrets verified; frontend/backend Stripe disabled and no sync schedule.
 - [ ] Anonymous Edge health reports connected database; anonymized metrics, Swagger UI, and OpenAPI schema are reachable without authentication.
@@ -639,24 +660,186 @@ Auth UUID, SMTP configuration, and administrative contacts. Do not put secrets i
 this runbook. An account compromise requires session/key revocation and impact
 assessment, not merely a static redeploy.
 
-## 13. Optional Bank Connections Later
+## 13. Owner-Operated Live Bank Activation
 
-CSV production readiness does not authorize Stripe enablement. Before automatic
-bank data:
+The owner explicitly chose live-first on November 10, 2026, reports live balances
+and transactions approval, an empty financial database, and accepts the existing
+paid sync policy. Sandbox-first is not a prerequisite for this approved rollout;
+synthetic tests with mocked Stripe remain mandatory. Repository implementation
+does not authorize hosted changes, bank credentials, deployments or paid feeds.
+No live account coverage, webhook delivery, scheduling, data correctness or
+charges are verified by repository/CI results.
 
-1. Obtain Financial Connections production eligibility/approval and accept current
-   pricing explicitly. Verify each specific Wells Fargo, Citi, and Mountain
-   America account/card supports the needed transaction/balance features.
-2. Use isolated Stripe test configuration first. Configure backend secret keys,
-   matching public key, raw-body signed webhooks, and a private secret-authenticated
-   minute scheduler. Test retries, deduplication, leases, cost/cooldown limits,
-   disconnect/delete cleanup, and environment boundaries.
-3. Confirm backup/MFA recovery and the consequences of restoring provider state.
-   Check that disabling the app does not leave recurring subscriptions active.
-4. Obtain explicit live authorization before setting live keys, mode, and live
-   authorization flags. Connect one account at a time and verify history,
-   balances, overlap handling, and charges.
+### Activation Order
 
-See the README's Worker Operations, Backup And Recovery, and Limits And Costs
-sections for detailed constraints. Never infer exact-account support from an
-institution name in provider marketing.
+1. Complete owner/MFA denial, password/MFA recovery and matching-major encrypted
+   backup/restore gates before real data. Apply the reviewed forward migration
+   in section 4 manually, then publish compatible backend/frontend code with
+   public and backend `STRIPE_ENABLED=false`. Code release must not start feeds.
+2. In Supabase application secrets only, install matching live backend credentials:
+   `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_MODE=live`, and the
+   independent `WORKER_SECRET`. Initially keep `STRIPE_ENABLED=false` and
+   `STRIPE_LIVE_AUTHORIZED=false`. Prefer a restricted `rk_live_` key with only
+   Customer create/retrieve and Financial Connections session/account retrieval,
+   transactions, balance refresh, subscribe/unsubscribe and disconnect abilities
+   actually used. Verify the current Stripe restricted-key permission names in
+   its dashboard; never grant payments, payouts or Connect. `STRIPE_SECRET_KEY`
+   remains the server setting name for restricted keys. Keys must belong to the
+   same Stripe account as the eventual public `pk_live_` key; do not reuse test
+   customer mappings. Do not put any backend key in GitHub variables/builds.
+3. Register the live snapshot webhook and verify signatures/events as below.
+   Create and verify the private minute worker schedule before first linking.
+   Anonymous `/health` success is not proof of worker/webhook readiness.
+4. Owner explicitly sets backend `STRIPE_LIVE_AUTHORIZED=true` and
+   `STRIPE_ENABLED=true` in Supabase. Keep `STRIPE_MODE=live` and matching keys.
+   Owner then sets repository variables `STRIPE_ENABLED=true` and
+   `STRIPE_PUBLISHABLE_KEY` to the matching live public key and releases current
+   `master` through the existing gates. `BUDGETING_DEPLOY_ENABLED` independently
+   controls publishing, not Stripe authorization. Do not shadow these public
+   repository variables with different production-environment values.
+5. Perform the one-account checklist below before expanding. Save only sanitized
+   release revision, public configuration evidence, delivery/run status and
+   acceptance outcome privately, never financial exports/screenshots in Git/CI.
+
+### Live Snapshot Webhook
+
+Destination: `$SUPABASE_URL/functions/v1/stripe-webhook`. Select only:
+
+- `financial_connections.account.refreshed_transactions`
+- `financial_connections.account.refreshed_balance`
+- `financial_connections.account.disconnected`
+- `financial_connections.account.deactivated`
+- `financial_connections.account.reactivated`
+
+Use snapshot payloads containing `data.object` account identity, `livemode` and
+event identity; no thin events, preview relink or unrelated payment events.
+The backend verifies raw-body signatures with this destination's `whsec_` secret
+before durable deduplicated enqueue. Do not rewrite request bodies in a proxy.
+The runtime sends `Stripe-Version: 2024-06-20`, the stable snapshot contract
+covered by synthetic fixtures. Configure the live snapshot destination to match
+`2024-06-20` and record it privately. Verify the dashboard supports that version
+and confirm actual account/refresh/transaction payload compatibility before
+activation; if unavailable or incompatible, stop for a reviewed code/fixture
+update. Synthetic compatibility is not evidence of successful live delivery.
+Verify delivery status and sanitized worker results without copying real payloads
+into chat, source or diagnostics. Keep signing-secret rotation owner-operated.
+
+### Minute Worker Schedule
+
+Owner-run Supabase template, not an automatically applied migration: enable
+`pg_cron`, `pg_net` and Vault through trusted platform administration. Using
+Vault's private dashboard, store `budgeting_worker_url` as the exact HTTPS
+`$SUPABASE_URL/functions/v1/worker` URL and `budgeting_worker_secret` as the same
+independent secret installed in the worker. Supply values only through private
+secret storage, not literal SQL, cron definitions, URLs or source. Restrict Vault
+decryption, cron metadata and network response tables to trusted administration;
+never grant browser roles access. Confirm no duplicate job before scheduling.
+
+```sql
+select cron.schedule(
+  'budgeting-worker-minute', '* * * * *',
+  $job$
+    select net.http_post(
+      url := (select decrypted_secret from vault.decrypted_secrets
+              where name = 'budgeting_worker_url'),
+      headers := jsonb_build_object(
+        'Content-Type', 'application/json',
+        'Authorization', 'Bearer ' ||
+          (select decrypted_secret from vault.decrypted_secrets
+           where name = 'budgeting_worker_secret')),
+      body := '{}'::jsonb,
+      timeout_milliseconds := 60000
+    );
+  $job$
+);
+
+-- List schedule without selecting decrypted secrets or command contents.
+select jobid, jobname, schedule, active from cron.job
+where jobname = 'budgeting-worker-minute';
+-- Cron success means HTTP enqueue only, not successful worker processing.
+select r.jobid, r.status, r.start_time, r.end_time
+from cron.job_run_details r join cron.job j using (jobid)
+where j.jobname = 'budgeting-worker-minute'
+order by r.start_time desc limit 10;
+-- Check asynchronous HTTP status, never response bodies/financial content.
+select id, status_code, timed_out, created from net._http_response
+order by created desc limit 10;
+```
+
+For a private one-shot verification, execute the same `net.http_post` expression
+in trusted SQL and retain its returned request ID. Match that ID in
+`net._http_response`, require HTTP 200, then confirm sanitized worker logs/private
+job progression. The response table also contains other requests; recent rows
+alone do not prove this schedule succeeded. Verify at least two minute runs,
+no auth failures, durable job lease/retry behavior and pending work advancing.
+Bounded worker batches can leave more work for the next invocation. Account for
+one-minute invocation quotas, platform pausing and monitoring. Never expose the
+worker secret as a query string or use an owner JWT as the scheduler credential.
+The 60-second HTTP timeout accommodates the worker's bounded processing window;
+platform execution limits or slow provider calls can still interrupt a run, so
+verify durable leases/retries rather than assuming cron enqueue means success.
+
+After provider cleanup (below), owner can pause or remove the schedule:
+
+```sql
+select cron.alter_job(jobid, active := false) from cron.job
+where jobname = 'budgeting-worker-minute';
+-- Resume only after reviewing cause, credentials and outstanding jobs.
+-- select cron.alter_job(jobid, active := true) from cron.job
+-- where jobname = 'budgeting-worker-minute';
+select cron.unschedule(jobid) from cron.job
+where jobname = 'budgeting-worker-minute';
+```
+
+Pausing/removing does not cancel an already-running request. Verify job listing,
+last-run/HTTP status and outstanding work afterward; do not automatically delete
+Vault credentials until provider cleanup is verified.
+
+### First Live Account Acceptance
+
+1. Owner signs in with MFA and links only one supported checking/savings account.
+   Confirm data-only balances/transactions permissions, no payments or money
+   movement, no automatic paid balance prefetch. This is staged rollout, not a
+   permanent one-account limit. Cancel/retry errors must not imply success.
+2. See pending transaction subscription/initial sync, verify signed webhook
+   delivery and durable worker ingestion. If completion is interrupted, use the
+   owner-initiated retry-completion path rather than starting another bank link.
+   If accepted subscription work exhausts retries, review the sanitized cause and
+   explicitly confirm Retry transaction subscription to requeue the same durable
+   subscription identity and ongoing cost, not a new link or balance purchase.
+   Check sanitized partial/error/inactive states. History is institution-dependent,
+   up to 180 days; unsupported accounts retain CSV/manual fallback.
+3. Compare selected entries, dates, signs and USD amounts privately with the bank.
+   Do not automatically merge CSV/manual accounts or overlapping history. Missing
+   or unsupported balances must remain visible, never silently zero.
+4. Explicitly confirm one paid manual balance refresh, verify timestamp/value and
+   usage reservation. The server-authoritative cap is 50 attempts per UTC month
+   across the app, including conservative uncertain attempts, with cooldown and
+   provider availability checks. It is not a total Stripe bill cap.
+5. Disconnect and verify provider unsubscribe/access cleanup, stopped feed and
+   retained local history before linking additional accounts. Verify no late
+   webhook/job reactivates a locally disconnected account. Do not infer exact
+   Wells Fargo/Citi/Mountain America account support from institution marketing.
+
+Published pricing checked November 10, 2026: transactions $0.30 per
+institution/account holder/month, balances $0.10 per successful call; other
+charges may apply. Owner accepts daily transaction subscriptions and separate
+balance charges. Recheck current terms; this is not a billing guarantee.
+
+### Charge-Stopping Rollback
+
+Disable backend new activity with `STRIPE_ENABLED=false` and release public
+`STRIPE_ENABLED=false` with empty `STRIPE_PUBLISHABLE_KEY` if hiding new linking
+is needed. Neither setting stops existing Stripe subscriptions. Keep mode,
+matching backend credentials, `STRIPE_LIVE_AUTHORIZED=true`, owner/MFA access and
+worker availability for cleanup. Use authenticated disconnect, inspect pending
+cleanup/retry state and Stripe subscription/access state, and verify feeds stopped
+before pausing/removing the schedule or revoking keys. Escalate provider failures
+through trusted Stripe administration; do not assume an inactive UI means charges
+stopped. Preserve local history, retry records and backups. Hiding the frontend,
+pausing workers or Vercel rollback alone cannot stop paid feeds. Do not delete
+financial tables, reset migration history or replay uncertain paid refreshes.
+
+See README Worker Operations, Backup And Recovery, and Limits And Costs for
+recovery constraints. Actual hosted acceptance remains owner-operated and
+unverified until these checks are completed and recorded.

@@ -4,8 +4,81 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:private_budgeting/repository.dart';
 import 'package:supabase/supabase.dart';
+import 'auth_test.dart' show session;
 
 void main() {
+  test('pending API uses GET and rejects malformed summaries', () async {
+    var malformed = false;
+    final client = SupabaseClient('https://example.supabase.co', 'public-key',
+        httpClient: MockClient((request) async {
+      expect(request.method, 'GET');
+      expect(request.url.path, endsWith('/connections/pending'));
+      return http.Response(
+          jsonEncode({
+            'sessions': malformed
+                ? [{}]
+                : [
+                    {
+                      'sessionId': 'original',
+                      'createdAt': '2026-11-10',
+                      'status': 'pending'
+                    }
+                  ]
+          }),
+          200,
+          headers: {'content-type': 'application/json'});
+    }));
+    addTearDown(client.dispose);
+    final repo = LedgerRepository(client);
+    expect((await repo.pendingConnections()).single['sessionId'], 'original');
+    malformed = true;
+    await expectLater(repo.pendingConnections(), throwsFormatException);
+  });
+
+  test('completion checks owner/MFA before and after accepting async work',
+      () async {
+    var ownerAllowed = true;
+    var completionCalls = 0;
+    var loseOwner = false;
+    final client = SupabaseClient('https://example.supabase.co', 'public-key',
+        authOptions: const AuthClientOptions(autoRefreshToken: false),
+        httpClient: MockClient((request) async {
+      Object result;
+      if (request.url.path.endsWith('/token')) {
+        result = session('aal2');
+      } else if (request.url.path.endsWith('/is_budget_owner')) {
+        result = ownerAllowed;
+      } else {
+        completionCalls++;
+        expect(jsonDecode(request.body), {'sessionId': 'original'});
+        if (loseOwner) ownerAllowed = false;
+        result = {
+          'accountIds': ['a'],
+          'status': 'queued'
+        };
+      }
+      return http.Response(jsonEncode(result), 200,
+          headers: {'content-type': 'application/json'}, request: request);
+    }));
+    addTearDown(client.dispose);
+    final repo = LedgerRepository(client);
+    await expectLater(
+        repo.completeConnection('original', null), throwsFormatException);
+    expect(completionCalls, 0);
+    await client.auth
+        .signInWithPassword(email: 'owner@example.test', password: 'synthetic');
+    final owner = repo.authenticatedOwner;
+    expect(owner, isNotNull);
+    expect(
+        (await repo.completeConnection('original', owner))['status'], 'queued');
+    loseOwner = true;
+    await expectLater(
+        repo.completeConnection('original', owner), throwsFormatException);
+    expect(completionCalls, 2);
+    await expectLater(
+        repo.completeConnection('original', owner), throwsFormatException);
+    expect(completionCalls, 2);
+  });
   test('reads every page instead of silently truncating financial totals',
       () async {
     var calls = 0;

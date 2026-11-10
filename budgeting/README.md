@@ -47,10 +47,10 @@ Run commands from the repository root unless a block explicitly changes the work
 | --- | --- |
 | `SUPABASE_URL` | Release build requires `https://<20 lowercase alphanumeric project-ref>.supabase.co`, with no credentials, port, non-root path, query, or fragment |
 | `SUPABASE_PUBLISHABLE_KEY` | Release build requires `sb_publishable_` followed by at least 20 letters, digits, underscores, or hyphens; no placeholders, legacy JWT anon keys, service-role keys, or secret keys |
-| `STRIPE_PUBLISHABLE_KEY` | Must be empty for the current release build/pipeline |
-| `STRIPE_ENABLED` | Must be `false` for the current release build/pipeline; defaults to `false` |
+| `STRIPE_PUBLISHABLE_KEY` | Empty when disabled; enabled production releases require `pk_live_` plus at least 20 alphanumeric characters, without placeholders |
+| `STRIPE_ENABLED` | Defaults to `false`; only exact `true` opts into live-enabled production builds |
 
-These values are embedded in public JavaScript. Anyone can read them. `scripts/build.sh` runs containerized `release.ts preflight` before compilation and passes only these four values as Docker build arguments. Key-shape validation cannot prove that a key belongs to the selected project: verify both values in the intended Supabase project's settings. Application-level legacy anon-key support is unchanged, but the release path deliberately requires the new publishable format. Public `config.yaml` also ships in the artifact; it is not a secret store. Future Stripe enablement requires separately reviewed release changes and launch approval, not merely changing a variable. Backend authorization remains authoritative; public YAML cannot grant access.
+These values are embedded in public JavaScript. Anyone can read them. `scripts/build.sh` runs containerized `release.ts preflight` before compilation and passes only these four values as Docker build arguments. Key-shape validation cannot prove project ownership: verify the Supabase pair and matching Stripe account/mode privately. Secret/restricted, test-mode, malformed and placeholder Stripe keys are rejected without printing values. Local mocked/test-mode validation is separate from this production contract. Public `config.yaml` permits the capability (`stripe_enabled: true`) but cannot activate it: the build flag defaults false, a public key is required, and independent backend `STRIPE_ENABLED`, `STRIPE_MODE=live`, `STRIPE_LIVE_AUTHORIZED=true`, credentials, owner and MFA gates remain mandatory. YAML false blocks linking even with the build flag; YAML true plus a disabled build still blocks linking. The default `AppConfig` remains false. Backend authorization is never inferred from YAML or release evidence.
 
 ### Backend And Administration
 
@@ -62,7 +62,7 @@ These values are embedded in public JavaScript. Anyone can read them. `scripts/b
 | `STRIPE_ENABLED` | Independent backend enablement; defaults to `false`; a public build flag does not enable it |
 | `STRIPE_MODE` | `test` by default; test and live projects/keys/data must remain isolated |
 | `STRIPE_LIVE_AUTHORIZED` | Defaults to `false`; explicit additional live authorization gate |
-| `STRIPE_SECRET_KEY` | Private Stripe API key, required only for approved Stripe functionality |
+| `STRIPE_SECRET_KEY` | Backend-only `rk_live_`/`sk_live_` (or isolated test counterpart), with matching mode; prefer least-privilege restricted key, no payments/payouts/Connect permissions |
 | `STRIPE_WEBHOOK_SECRET` | Private signing secret for this environment's webhook endpoint |
 | `WORKER_SECRET` | Independent high-entropy bearer secret for the trusted scheduler, not an owner JWT |
 | `DATABASE_URL` | Private PostgreSQL URL for trusted admin/recovery tooling, `postgresql://user:password@host:5432/database?sslmode=verify-full`; remote recovery requires certificate and hostname validation |
@@ -177,6 +177,17 @@ sh budgeting/supabase/tests/run-local.sh
 
 Omit `BUILD_CA_FILE` on standard-trust networks. This artifact embeds the disposable Supabase CLI public key and localhost URL and must never be deployed. It leaves `build/web` and the Vercel package unchanged. Both CI definitions run this additional phase after the unconfigured artifact checks. A passing local API harness alone is not a passing signed-in browser test.
 
+Both CI definitions also exercise explicit enabled linking against mocked Stripe only:
+
+```sh
+BUDGETING_MOCK_STRIPE=true sh budgeting/scripts/build-local-browser.sh
+BUDGETING_MOCK_STRIPE=true BUDGETING_BROWSER_INTEGRATION=true \
+BUDGETING_BROWSER_ARTIFACT="$PWD/budgeting/build/local-browser-stripe" \
+sh budgeting/supabase/tests/run-local.sh
+```
+
+This separate synthetic artifact uses a test-shaped public key. Disposable function wrappers intercept only Stripe HTTP requests; Auth, MFA, PostgreSQL and function dispatch remain real. The browser mocks Stripe.js consent, interrupts completion, reloads and resumes the same pending session. No real bank calls occur. For offline local checks with an already cached container image, `BUDGETING_FLUTTER_IMAGE=budgeting-build:latest BUDGETING_PUB_OFFLINE=true` permits cached dependency resolution without weakening TLS. CI continues to fetch dependencies normally.
+
 The harness uses a `corporate_ca` BuildKit secret for image trust and mounts the public certificate read-only for runtime `NODE_EXTRA_CA_CERTS`. This is separate from Flutter/browser `BUILD_CA_FILE` and recovery database TLS roots; no TLS bypass is used.
 
 The network harness covers real MFA/owner/RLS denial, manual records, CSV operations, annotations/budgets, usage and export. It checks recovery-email receipt in Mailpit, rejects a correctly HMAC-signed but expired JWT at both Edge and PostgREST, and separately rejects a tampered JWT. This does **not** complete browser recovery-link navigation, password replacement, post-recovery MFA or hosted SMTP delivery. `integration_test/local_supabase_test.dart` additionally expects explicitly supplied synthetic `TEST_SUPABASE_URL`, `TEST_SUPABASE_KEY`, `TEST_OWNER_EMAIL`, `TEST_OWNER_PASSWORD` and `TEST_OWNER_TOTP_SECRET` build defines and a prepared local fixture; it is not equivalent to running the standalone Deno harness. The passing Chromium phase covers the specific signed-in flow listed above, not the complete hosted launch checklist or live Stripe acceptance.
@@ -245,7 +256,9 @@ Financial routes include a second `/api/v1` segment, for example `$SUPABASE_URL/
 | `POST /api/v1/imports/{id}/undo` | Undo that owner's batch; annotated rows are retained rather than silently losing edits |
 | `GET /api/v1/export` | Sensitive portable JSON export; not a complete database backup |
 | `POST /api/v1/connections/session` | Server-chosen data-only connection session ID/client secret |
-| `POST /api/v1/connections/complete` | `{sessionId}`; server verifies owner/customer/session before linking/subscribing |
+| `GET /api/v1/connections/pending` | Owner/MFA-only resumable session summaries `{sessions:[{sessionId,createdAt,status}]}`, never client secrets |
+| `POST /api/v1/connections/complete` | `{sessionId}`; authoritative owner/customer/mode/permission checks; `{accountIds,status:'queued'}` durably accepts subscriptions before async sync, completed replay returns recorded result |
+| `POST /api/v1/accounts/{id}/subscription-retry` | `{confirmCost:true}`; explicitly requeues the same accepted subscription job/identity after failure, no new link or balance purchase |
 | `POST /api/v1/accounts/{id}/balance-refresh` | `{confirmCost:true}`; 202 durable request ID/status, subject to cap/cooldown/provider checks |
 | `POST /api/v1/accounts/{id}/disconnect` | Durable provider cleanup, retaining local history |
 | `POST /api/v1/accounts/{id}/delete` | `{confirmDelete:true}`; provider cleanup before local cascading deletion |
@@ -256,11 +269,18 @@ Profiles, manual accounts/snapshots, categories, annotations and budgets use own
 
 ### Worker Operations
 
-The webhook URL is `$SUPABASE_URL/functions/v1/stripe-webhook`, requiring the environment's Stripe raw-body signature and expected test/live mode. The worker is `POST $SUPABASE_URL/functions/v1/worker` with `Authorization: Bearer <WORKER_SECRET>`. An approved scheduler must invoke it every minute; never expose that secret in a public cron URL or frontend. Use the platform's private secret facilities. No schedule is created by a static deploy.
+The webhook URL is `$SUPABASE_URL/functions/v1/stripe-webhook`, requiring the environment's Stripe raw-body signature and expected test/live mode. Select live snapshot events `financial_connections.account.refreshed_transactions`, `financial_connections.account.refreshed_balance`, `financial_connections.account.disconnected`, `financial_connections.account.deactivated`, and `financial_connections.account.reactivated` only. Do not select thin events, preview relink or payments events. The worker is `POST $SUPABASE_URL/functions/v1/worker` with `Authorization: Bearer <WORKER_SECRET>`. An approved scheduler must invoke it every minute; never expose that secret in a public cron URL or frontend. Use the platform's private secret facilities. No schedule is created by a static deploy. [Production Setup section 13](PRODUCTION_SETUP.md#13-owner-operated-live-bank-activation) includes the owner-run Vault/pg_cron template, listing/last-run/removal checks, webhook API-version gate and first-account acceptance.
 
 Jobs are durable, leased, bounded and retried with backoff. Lease expiry allows recovery; after eight failed attempts a trusted operator must investigate the sanitized error, provider/account state and overlap before a narrowly scoped retry. Do not reset all jobs, replay old webhooks, refund uncertain paid reservations, or enqueue fresh balance purchases as a recovery shortcut. Daily transaction recovery is not a paid balance refresh and cannot prove that every missed event was recovered without checking sync state.
 
-To pause safely, disable new frontend/backend linking and refresh, then stop the external worker schedule. This alone does not cancel Stripe recurring subscriptions. When abandoning sync, allow authenticated disconnect/delete cleanup to complete while a worker is available, verify subscriptions/provider access are stopped, then disable the schedule and backend Stripe integration. Retain financial history/backups as intended. Investigate exhausted disconnect jobs before assuming charges stopped.
+Paid-refresh recovery conservatively compares the persisted pre-dispatch balance
+timestamp and first dispatch time with authoritative provider results. Same-second
+or unchanged `as_of` values can remain uncertain even if Stripe succeeded. Keep
+the original reservation counted and reconcile existing dashboard/webhook/job
+evidence using sanitized IDs; never create a second paid reservation merely to
+resolve uncertainty or infer success from an unrelated old balance.
+
+To pause safely, disable new frontend/backend linking and refresh. This does not cancel Stripe recurring subscriptions. When abandoning sync, keep matching credentials, mode/live authorization and the worker available for authenticated disconnect cleanup even with new activity disabled. Verify subscriptions/provider access are stopped before pausing/removing the worker schedule or revoking keys. Retain financial history/backups and retry records. Investigate exhausted disconnect jobs before assuming charges stopped; frontend rollback, hiding controls or pausing workers does not stop feed charges.
 
 ## Deployment
 
@@ -284,6 +304,8 @@ Release jobs are disabled unless repository variable `BUDGETING_DEPLOY_ENABLED` 
 | Repository variable | `BUDGETING_DEPLOY_ENABLED` | Unset/anything other than exact `true` means validation only |
 | Repository variable | `SUPABASE_URL` | Verified hosted origin satisfying release preflight |
 | Repository variable | `SUPABASE_PUBLISHABLE_KEY` | Matching browser-safe `sb_publishable_...` key |
+| Repository variable | `STRIPE_ENABLED` | Unset defaults false; exact `true` only after owner activation readiness |
+| Repository variable | `STRIPE_PUBLISHABLE_KEY` | Empty by default/when disabled; matching live public key only when enabled |
 | `budgeting-production` environment variable | `SUPABASE_PROJECT_REF` | Production project ref; `SUPABASE_URL` must equal `https://<ref>.supabase.co` exactly |
 | Same environment secret | `SUPABASE_ACCESS_TOKEN` | Supabase account token authorized to read project metadata and deploy functions; not a project API key |
 | `budgeting-production` environment variable | `VERCEL_ORG_ID` | Verified dedicated account/team ID |
@@ -297,7 +319,7 @@ Restrict `budgeting-production` deployments to `master` in GitHub environment se
 
 After explicit activation authorization, every `master` push/merge is eligible, including documentation-only changes. Manual dispatch must select current `master`; re-runs can release only while their SHA is still current. Freshness is checked before building and again after the serialized deployment queue; stale runs fail and require a new dispatch against current `master`. PRs (including forks), other branches/tags, previews, schedules, and daily container rebuilds do not release. Concurrent validation may be canceled, but production publishing uses a fixed group with `cancel-in-progress: false`. GitHub does not guarantee FIFO ordering and may supersede pending releases.
 
-`release-build` requires successful validation, both independent 70% coverage gates, and real disposable Supabase/browser integration. It runs `build.sh` with public values and Stripe disabled, then the configured local browser smoke. It stages only `release/.vercel/output` and `manifest.json`, outside the served static tree. The manifest records source SHA, run/attempt, build time, resolved tool versions/image evidence, and per-file SHA-256 checksums. The immutable `budgeting-release-<run>-<attempt>` artifact includes hidden output, fails if missing, and is retained 30 days. Artifact access follows repository permissions; all contents must be browser-safe, even in a private repository. Do not upload source, `.env`, backend secrets, `build/local-browser`, or the unconfigured validation artifact as a release.
+`release-build` requires successful validation, both independent 70% coverage gates, and real disposable Supabase/browser integration. It runs `build.sh` with public repository values (Stripe defaults disabled), then configured local browser smoke using those same settings. It stages only `release/.vercel/output` and non-served `manifest.json`. The build emits browser-safe `release-config.json` containing public Supabase and Stripe enablement/key identity; smoke compares it and compiled key identity to intended values. The manifest binds that public configuration, source SHA, run/attempt, build time, tool/image evidence and per-file SHA-256 checksums. Deploy compares the manifest and static evidence to its current public settings before any backend mutation or publication; changes between jobs fail closed and require a new run. No backend Stripe credentials enter GitHub builds. The immutable `budgeting-release-<run>-<attempt>` artifact includes hidden output, fails if missing, and is retained 30 days. Artifact access follows repository permissions; all contents must be browser-safe. Do not upload source, `.env`, backend secrets, `build/local-browser`, or the unconfigured validation artifact as a release.
 
 `deploy` depends on validation and that build, uses a fresh trusted-SHA checkout, downloads the exact same-run artifact ID, and verifies its source/checksums with read-only tooling. It does not execute artifact-provided scripts or rebuild. `release.ts target` authenticates and verifies existing Vercel project/account/name before containerized `vercel deploy --prebuilt --prod`; it must not create/relink a project. The Vercel token is available only to that publish step, not dependency installation, release build, or smoke tests. Tool dependencies are installed only in containers. Actions use full commit SHAs; default token access is read-only, with `actions: read` added only for deployment artifact access and checkout credentials not persisted.
 
@@ -339,7 +361,7 @@ The workflow captures the unique project deployment URL/ID, then checks that URL
 2. Add **only `budgeting.benknight.dev`** to the intended Vercel project. At the authoritative DNS zone for `benknight.dev`, create/update the **`budgeting` CNAME** to the **exact target Vercel displays for that project/domain**. No target has been allocated or verified in this repository; do not assume a generic CNAME value. Add only the exact domain-verification TXT record if Vercel requests it. Resolve conflicting records for this subdomain deliberately, never the apex, `www`, portfolio records, nameservers or unrelated mail records.
 3. Wait for authoritative DNS verification and Vercel-issued TLS, then verify HTTPS, actual response headers and recovery redirects at `https://budgeting.benknight.dev`. Match this exact origin in Auth/CORS. DNS/TLS and hosted edge behavior are external gates, not local-test results.
 4. Run owner/MFA denial, SMTP/reset, backup/restore and CSV-only smoke checks with synthetic data before importing real finances. Deploy CSV-only while Stripe remains disabled.
-5. Separately approve Stripe eligibility, registration/live transaction access, current pricing, backups/MFA recovery and each exact account/card. Link one account at a time only after that approval. No paid calls, live registrations or subscriptions are authorized here.
+5. The owner chose live-first Financial Connections and reports balances/transactions approval and an empty financial database. Repository approval does not authorize hosted activation or paid calls. Follow Production Setup section 13: verify matching live keys, webhook, minute worker and recovery first, accept one checking/savings account before expanding. Account coverage and live operation remain unverified until that acceptance.
 
 ### Rollback
 
@@ -403,7 +425,7 @@ Choose a manual backup cadence based on acceptable data loss, for example before
 - CSV and Stripe overlapping date ranges require manual reconciliation/removal. Import undo retains annotated rows; review the resulting ledger. Repeated-file identities and duplicate candidates do not prove two similar purchases are the same transaction.
 - The frontend fetches the ledger in paginated memory and renders a bounded visible list, not a large multi-user analytics backend. No persistent offline financial access is supported.
 - Balance refresh has an app-enforced 24-hour per-account cooldown and 50 reserved attempts per UTC month across the app, with conservative accounting for uncertain failures and deleted accounts. Reporting months are Denver time; the cap month is UTC. Provider availability can impose additional delays; the usage timestamp is not a promise Stripe will accept a request.
-- Previously advertised Stripe pricing was $0.30 per institution/account holder/month for transactions and $0.10 per successful balance call: roughly $0.90 for three institutions plus about $5 for 50 successful balance calls, **not an all-in quote or billing guarantee**. Recheck current terms/prices, verification/other fees and tax before enabling. This cap cannot limit subscriptions, external dashboard/API activity or charges outside this app.
+- Published Stripe pricing checked November 10, 2026 was $0.30 per institution/account holder/month for transactions and $0.10 per successful balance call, **not an all-in quote or billing guarantee**. Owner accepts daily paid transaction subscriptions and separate explicit balance refresh charges. Recheck current terms/prices, other fees and tax before enabling. The 50-attempt UTC-month cap cannot limit subscriptions, external dashboard/API activity or charges outside this app; linking never prefetches paid balances. History availability is institution-dependent, up to 180 days.
 - Each specific Wells Fargo account/card, Citi account/card and Mountain America account/card is **unverified until live testing**. An institution appearing in Stripe marketing does not establish transaction/balance coverage, personal-use eligibility, history depth or ongoing consent availability.
 - Supabase Free has historically advertised 500 MB database storage and 500,000 Edge Function invocations, possible pausing after a week of inactivity, and no automatic database backups. Recheck current quotas/pricing; one-minute workers consume invocations even without new data. Free-tier pausing and quotas can interrupt sync/recovery; no uptime guarantee is implied.
 - Vercel, SMTP, storage/egress and backup custody may have separate quotas/costs. Monitor platform usage and sanitized sync errors. Do not rely on a free tier as a recovery strategy.

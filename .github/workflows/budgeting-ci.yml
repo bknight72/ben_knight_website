@@ -26,6 +26,10 @@ jobs:
         run: |
           sh budgeting/scripts/build-local-browser.sh
           BUDGETING_BROWSER_INTEGRATION=true BUDGETING_BROWSER_ARTIFACT="$GITHUB_WORKSPACE/budgeting/build/local-browser" sh budgeting/supabase/tests/run-local.sh
+      - name: Real isolated Supabase with mocked Stripe linking
+        run: |
+          BUDGETING_MOCK_STRIPE=true sh budgeting/scripts/build-local-browser.sh
+          BUDGETING_MOCK_STRIPE=true BUDGETING_BROWSER_INTEGRATION=true BUDGETING_BROWSER_ARTIFACT="$GITHUB_WORKSPACE/budgeting/build/local-browser-stripe" sh budgeting/supabase/tests/run-local.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: budgeting-static-unconfigured
@@ -53,8 +57,8 @@ jobs:
       SOURCE_SHA: ${{ github.sha }}
       SUPABASE_URL: ${{ vars.SUPABASE_URL }}
       SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
-      STRIPE_ENABLED: 'false'
-      STRIPE_PUBLISHABLE_KEY: ''
+      STRIPE_ENABLED: ${{ vars.STRIPE_ENABLED || 'false' }}
+      STRIPE_PUBLISHABLE_KEY: ${{ vars.STRIPE_PUBLISHABLE_KEY || '' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -96,6 +100,7 @@ jobs:
           export TOOL_VERSIONS
           docker run --rm -v "$GITHUB_WORKSPACE:/workspace" -w /workspace \
             -e SOURCE_SHA -e TOOL_VERSIONS -e GITHUB_RUN_ID -e GITHUB_RUN_ATTEMPT \
+            -e SUPABASE_URL -e SUPABASE_PUBLISHABLE_KEY -e STRIPE_ENABLED -e STRIPE_PUBLISHABLE_KEY \
             denoland/deno:latest run --allow-env --allow-read --allow-write \
             budgeting/scripts/release.ts manifest release
       - name: Retain immutable release
@@ -139,8 +144,8 @@ jobs:
       SOURCE_SHA: ${{ needs.release-build.outputs.source-sha }}
       SUPABASE_URL: ${{ vars.SUPABASE_URL }}
       SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
-      STRIPE_ENABLED: 'false'
-      STRIPE_PUBLISHABLE_KEY: ''
+      STRIPE_ENABLED: ${{ vars.STRIPE_ENABLED || 'false' }}
+      STRIPE_PUBLISHABLE_KEY: ${{ vars.STRIPE_PUBLISHABLE_KEY || '' }}
       VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
       VERCEL_PROJECT_NAME: ${{ vars.VERCEL_PROJECT_NAME }}
@@ -179,6 +184,7 @@ jobs:
       - name: Verify release checksums and source revision read-only
         run: |
           docker run --rm -v "$GITHUB_WORKSPACE:/workspace:ro" -w /workspace \
+            -e SUPABASE_URL -e SUPABASE_PUBLISHABLE_KEY -e STRIPE_ENABLED -e STRIPE_PUBLISHABLE_KEY \
             denoland/deno:latest run --allow-env --allow-read \
             budgeting/scripts/release.ts verify release "$SOURCE_SHA"
       - name: Prepare containerized Vercel tooling without credentials

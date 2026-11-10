@@ -13,6 +13,53 @@ const teal = Color(0xff17695c);
 const canvas = Color(0xfff4f6f3);
 const muted = Color(0xff637570);
 
+String completionMessage(Json result) {
+  final statuses = result['accountStatuses'];
+  final partial = statuses is List &&
+      statuses.whereType<Map>().any((account) =>
+          !['active', 'subscribed', 'completed'].contains(account['status']));
+  return partial
+      ? 'Selected accounts accepted with partial or pending setup. Some feeds need recovery. Check each account below; do not create another link. Balances remain unknown until an explicit paid refresh.'
+      : 'Selected accounts accepted. Subscription setup and initial transaction sync are queued, not yet confirmed. Refresh to check progress. Balances require a separate paid refresh.';
+}
+
+String connectionState(Json account) {
+  if (account['connection_state'] == 'disconnected') {
+    return 'Disconnected. Local history is retained; no new sync is expected.';
+  }
+  if (account['connection_state'] == 'disconnecting') {
+    return 'Disconnect cleanup pending. Provider subscriptions may continue charging until cleanup completes. Retry disconnect if needed.';
+  }
+  return switch (account['sync_error']) {
+    'subscription_pending' =>
+      'Daily feed setup pending. Initial transactions are not ready.',
+    'subscription_failed' =>
+      'Daily feed setup failed. Background recovery is pending; do not create another link.',
+    'transactions_not_ready' =>
+      'Initial or refreshed transaction sync pending. Refresh to check progress.',
+    'transactions_failed' =>
+      'Transaction sync failed. Existing history is retained.',
+    'balance_not_ready' =>
+      'Balance refresh pending. Any displayed snapshot is the previous balance.',
+    'balance_unavailable' ||
+    'invalid_balance' =>
+      'Balance unavailable or unsupported in USD. A missing balance is not zero.',
+    'balance_failed' =>
+      'Balance refresh failed. Any displayed snapshot is the previous balance; uncertain attempts still count toward the cap.',
+    'connection_inactive' =>
+      'Bank connection inactive. Sync and paid refresh are unavailable. Existing history is retained.',
+    'retry_exhausted' =>
+      'Automatic recovery exhausted. Check the connection before requesting further provider activity.',
+    null => account['connection_state'] == 'error'
+        ? 'Connection needs attention. Existing history is retained.'
+        : account['balance_at'] == null
+            ? 'No balance available. Balances are never fetched automatically.'
+            : 'Balance snapshot available; check its timestamp before use.',
+    _ =>
+      'Provider sync needs attention. Existing history and balance snapshots are retained.',
+  };
+}
+
 class BudgetApp extends StatelessWidget {
   final AppConfig config;
   final bool configurationError;
@@ -272,6 +319,7 @@ class _AuthGateState extends State<AuthGate> {
   }
 
   void clearSessionUi() {
+    platform.clearStripe();
     setState(() {
       authorized = false;
       factorId = null;
@@ -530,10 +578,12 @@ class LedgerShell extends StatefulWidget {
   final AppConfig config;
   final LedgerRepository repository;
   final Future<void> Function() onLogout;
+  final Future<bool> Function(String, String) linkBank;
   const LedgerShell(
       {super.key,
       required this.repository,
       required this.onLogout,
+      this.linkBank = platform.linkStripe,
       this.config = const AppConfig()});
   @override
   State<LedgerShell> createState() => _LedgerShellState();
@@ -559,6 +609,11 @@ class _LedgerShellState extends State<LedgerShell> {
   String timezone = 'America/Denver';
   Json? refreshUsage;
   String? usageError;
+  List<Json> pendingConnections = [];
+  String? pendingError;
+  String? connectionNotice;
+  String? connectionProgress;
+  String? disconnectingAccount;
   static const pages = [
     'Overview',
     'Accounts',
@@ -585,6 +640,14 @@ class _LedgerShellState extends State<LedgerShell> {
     load();
   }
 
+  @override
+  void dispose() {
+    platform.clearStripe();
+    pendingConnections.clear();
+    connectionNotice = null;
+    super.dispose();
+  }
+
   Future<void> load() async {
     if (!mounted) return;
     setState(() {
@@ -608,11 +671,19 @@ class _LedgerShellState extends State<LedgerShell> {
             (a, b) => '${b['observed_at']}'.compareTo('${a['observed_at']}'));
       Json? usage;
       String? usageFailure;
+      List<Json>? pending;
+      String? pendingFailure;
       try {
         usage = await repo.api('usage', get: true);
       } catch (_) {
         usageFailure =
             'Refresh usage is unavailable. Paid refresh controls are disabled until usage can be checked.';
+      }
+      try {
+        pending = await repo.pendingConnections();
+      } catch (_) {
+        pendingFailure =
+            'Pending connections could not be loaded. Refresh before starting another link.';
       }
       if (!mounted) return;
       final annotations = {for (final a in results[3]) a['transaction_id']: a};
@@ -624,6 +695,8 @@ class _LedgerShellState extends State<LedgerShell> {
             '${results[7].firstOrNull?['reporting_timezone'] ?? widget.config.reportingTimezone}';
         refreshUsage = usage;
         usageError = usageFailure;
+        if (pending != null) pendingConnections = pending;
+        pendingError = pendingFailure;
         accounts = results[0].map((a) {
           final latest =
               snapshots.where((s) => s['account_id'] == a['id']).firstOrNull;
@@ -1086,11 +1159,42 @@ class _LedgerShellState extends State<LedgerShell> {
               icon: const Icon(Icons.add),
               label: const Text('Add manual account')),
           OutlinedButton.icon(
-              onPressed: working || !bankLinkingEnabled ? null : connectBank,
+              onPressed: working ||
+                      loading ||
+                      pendingError != null ||
+                      !bankLinkingEnabled
+                  ? null
+                  : connectBank,
               icon: const Icon(Icons.link),
               label: const Text('Connect bank'))
         ]),
         const SizedBox(height: 16),
+        if (connectionProgress != null) ...[
+          const LinearProgressIndicator(),
+          Text(connectionProgress!),
+        ],
+        if (connectionNotice != null) Text(connectionNotice!),
+        if (pendingError != null)
+          Text(pendingError!, style: const TextStyle(color: Colors.deepOrange)),
+        if (pendingConnections.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          const Text('Unfinished bank connections',
+              style: TextStyle(fontWeight: FontWeight.w600)),
+          const Text(
+              'Retry completion of the existing consent before starting another link. Daily feeds may incur ongoing charges; balances are not fetched automatically.'),
+          for (final session in pendingConnections)
+            Wrap(
+                spacing: 12,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text('${session['createdAt']} / ${session['status']}'),
+                  OutlinedButton(
+                      onPressed: working || loading
+                          ? null
+                          : () => retryConnection(session),
+                      child: const Text('Retry completion')),
+                ]),
+        ],
         if (!bankLinkingEnabled)
           const Text(
               'Bank linking is disabled. CSV imports and manual snapshots are available. Live linking requires owner approval and verified institution coverage.',
@@ -1120,8 +1224,8 @@ class _LedgerShellState extends State<LedgerShell> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                     accountRow(a),
-                    if (a['sync_error'] != null)
-                      Text('Sync issue: ${a['sync_error']}',
+                    if (a['source'] == 'stripe')
+                      Text(connectionState(a),
                           style: const TextStyle(color: Colors.deepOrange)),
                     Text(
                         'Last successful sync: ${a['last_synced_at'] ?? 'Not synced'}',
@@ -1134,11 +1238,41 @@ class _LedgerShellState extends State<LedgerShell> {
                             icon: const Icon(Icons.edit_outlined),
                             label: const Text('Record balance')),
                       if (a['source'] == 'stripe') ...[
+                        if (a['connection_state'] != 'disconnected' &&
+                            a['connection_state'] != 'disconnecting' &&
+                            a['sync_error'] != null)
+                          OutlinedButton(
+                              onPressed: working
+                                  ? null
+                                  : () async {
+                                      final owner = repo.authenticatedOwner;
+                                      if (!await confirm(
+                                          'Retry transaction subscription?',
+                                          'Retries existing daily feed setup, not a new bank link. Daily transaction subscriptions may incur ongoing charges. No paid balance refresh is requested.')) {
+                                        return;
+                                      }
+                                      if (!mounted) return;
+                                      await perform(() async {
+                                        await repo.requireOwnerSession(owner);
+                                        await repo.api(
+                                            'accounts/${a['id']}/subscription-retry',
+                                            body: {'confirmCost': true});
+                                        await repo.requireOwnerSession(owner);
+                                      },
+                                          success:
+                                              'Transaction subscription recovery queued, not yet confirmed. Refresh to check progress.');
+                                    },
+                              child:
+                                  const Text('Retry transaction subscription')),
                         Text(
                             'Next app-eligible refresh: ${nextRefresh(a['id']) ?? 'Now (subject to provider availability)'}',
                             style: const TextStyle(color: muted, fontSize: 12)),
                         OutlinedButton(
                             onPressed: working ||
+                                    a['connection_state'] == 'disconnected' ||
+                                    a['connection_state'] == 'disconnecting' ||
+                                    a['connection_state'] == 'error' ||
+                                    a['sync_error'] == 'balance_not_ready' ||
                                     refreshUsage == null ||
                                     integer(refreshUsage![
                                             'remainingAttempts']) <=
@@ -1158,16 +1292,32 @@ class _LedgerShellState extends State<LedgerShell> {
                                   },
                             child: const Text('Request paid refresh')),
                         TextButton(
-                            onPressed: () async {
-                              if (await confirm('Disconnect this bank?',
-                                  'Stops provider subscriptions and access. Your existing history is retained.')) {
-                                perform(() async {
-                                  await repo
-                                      .api('accounts/${a['id']}/disconnect');
-                                });
-                              }
-                            },
-                            child: const Text('Disconnect')),
+                            onPressed: working ||
+                                    a['connection_state'] == 'disconnected'
+                                ? null
+                                : () async {
+                                    if (await confirm('Disconnect this bank?',
+                                        'Stops provider subscriptions and access. Your existing history is retained.')) {
+                                      if (!mounted) return;
+                                      setState(() =>
+                                          disconnectingAccount = '${a['id']}');
+                                      await perform(() async {
+                                        await repo.api(
+                                            'accounts/${a['id']}/disconnect');
+                                      },
+                                          success:
+                                              'Disconnect requested. History is retained. Check the connection state for cleanup completion.');
+                                      if (mounted) {
+                                        setState(
+                                            () => disconnectingAccount = null);
+                                      }
+                                    }
+                                  },
+                            child: Text(disconnectingAccount == '${a['id']}'
+                                ? 'Disconnecting...'
+                                : a['connection_state'] == 'disconnecting'
+                                    ? 'Retry disconnect'
+                                    : 'Disconnect')),
                       ],
                       TextButton(
                           onPressed: working
@@ -1788,12 +1938,90 @@ class _LedgerShellState extends State<LedgerShell> {
         'This is read-only Financial Connections, not payments. Daily transaction subscriptions may incur ongoing charges. Confirm approval, actual pricing, and exact account coverage before continuing.')) {
       return;
     }
-    await perform(() async {
-      final session = await repo.api('connections/session');
-      await platform.linkStripe(stripeKey, session['clientSecret'] as String);
-      await repo.api('connections/complete',
-          body: {'sessionId': session['sessionId']});
-    }, success: 'Connection verified. Initial transaction sync may take time.');
+    if (!mounted || working) return;
+    final owner = repo.authenticatedOwner;
+    setState(() {
+      working = true;
+      connectionNotice = null;
+      connectionProgress = 'Preparing bank connection...';
+    });
+    Json? session;
+    try {
+      await repo.requireOwnerSession(owner);
+      session = await repo.api('connections/session');
+      if (!mounted) return;
+      final sessionId = session['sessionId'] as String;
+      // Retain only the resumable identifier, never the client secret.
+      setState(() {
+        pendingConnections.add({
+          'sessionId': sessionId,
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+          'status': 'pending'
+        });
+        connectionProgress = 'Waiting for bank consent...';
+      });
+      final modal =
+          widget.linkBank(stripeKey, session['clientSecret'] as String);
+      session.clear();
+      session = null;
+      final linked = await modal;
+      if (!mounted) return;
+      await repo.requireOwnerSession(owner);
+      if (!linked) {
+        setState(() => connectionNotice =
+            'Bank connection cancelled. No completion was submitted. An unfinished consent can be retried below; no new link was created.');
+      } else {
+        setState(() => connectionProgress = 'Submitting selected accounts...');
+        final result = await repo.completeConnection(sessionId, owner);
+        if (!mounted) return;
+        setState(() => connectionNotice = completionMessage(result));
+      }
+    } catch (e) {
+      if (mounted) setState(() => connectionNotice = safeMessage(e));
+    } finally {
+      session?.clear();
+      if (mounted) {
+        await load();
+        if (mounted) {
+          setState(() {
+            working = false;
+            connectionProgress = null;
+          });
+        }
+      }
+    }
+  }
+
+  Future<void> retryConnection(Json session) async {
+    if (!await confirm('Retry bank completion?',
+        'Uses your existing bank consent, not a new link. Daily transaction feeds may incur ongoing charges. No paid balance refresh is requested.')) {
+      return;
+    }
+    if (!mounted || working) return;
+    final owner = repo.authenticatedOwner;
+    setState(() {
+      working = true;
+      connectionNotice = null;
+      connectionProgress = 'Retrying bank completion...';
+    });
+    try {
+      final result =
+          await repo.completeConnection(session['sessionId'] as String, owner);
+      if (!mounted) return;
+      setState(() => connectionNotice = completionMessage(result));
+    } catch (e) {
+      if (mounted) setState(() => connectionNotice = safeMessage(e));
+    } finally {
+      if (mounted) {
+        await load();
+        if (mounted) {
+          setState(() {
+            working = false;
+            connectionProgress = null;
+          });
+        }
+      }
+    }
   }
 
   Future<void> importCsv() async {

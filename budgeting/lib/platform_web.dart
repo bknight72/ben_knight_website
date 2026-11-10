@@ -5,7 +5,9 @@ external JSPromise<JSString?> _pickCsv();
 @JS('budgetBridge.download')
 external void _download(JSString name, JSString content);
 @JS('budgetBridge.linkStripe')
-external JSPromise<JSAny?> _linkStripe(JSString key, JSString secret);
+external JSPromise<JSString> _linkStripe(JSString key, JSString secret);
+@JS('budgetBridge.clearStripe')
+external void _clearStripe();
 @JS('budgetBridge.clearAuthUrl')
 external void _clearAuthUrl();
 
@@ -20,13 +22,25 @@ Future<String?> pickCsv() async {
 
 Future<void> download(String name, String content) async =>
     _download(name.toJS, content.toJS);
-Future<void> linkStripe(String key, String secret) async {
+Future<bool> linkStripe(String key, String secret) async {
+  String result;
   try {
-    await _linkStripe(key.toJS, secret.toJS).toDart;
+    result = (await _linkStripe(key.toJS, secret.toJS).toDart).toDart;
   } catch (_) {
     throw const FormatException(
-        'Bank connection was cancelled or failed. No connection was completed.');
+        'The bank connection could not be completed. Check pending connections before starting another link.');
   }
+  if (result == 'cancelled') return false;
+  if (result == 'load_failed') {
+    throw const FormatException(
+        'Stripe could not load. Check your connection or browser blocking settings, then try again.');
+  }
+  if (result != 'completed') {
+    throw const FormatException(
+        'The bank connection failed. Check pending connections before starting another link.');
+  }
+  return true;
 }
 
 void clearAuthUrl() => _clearAuthUrl();
+void clearStripe() => _clearStripe();

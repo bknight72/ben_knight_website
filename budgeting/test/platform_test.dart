@@ -10,5 +10,6 @@ void main() {
     expect(() => platform.linkStripe('pk_test_synthetic', 'synthetic-secret'),
         throwsUnsupportedError);
     platform.clearAuthUrl();
+    platform.clearStripe();
   });
 }

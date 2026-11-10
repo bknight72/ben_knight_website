@@ -1,0 +1,50 @@
+\set ON_ERROR_STOP on
+create extension if not exists dblink;
+insert into auth.users(id) values('00000000-0000-4000-8000-000000000001');
+insert into private.app_owner(owner_id) values('00000000-0000-4000-8000-000000000001');
+insert into private.customers values('00000000-0000-4000-8000-000000000001','cus_concurrent',false);
+insert into private.link_sessions(id,owner_id,customer_id) values('fcs_concurrent','00000000-0000-4000-8000-000000000001','cus_concurrent');
+select dblink_connect('link_a','dbname='||current_database()||' user=postgres');
+select dblink_connect('link_b','dbname='||current_database()||' user=postgres');
+select dblink_send_query('link_a',$q$select public.backend_state('session_claim','{"id":"fcs_concurrent","owner_id":"00000000-0000-4000-8000-000000000001"}')$q$);
+select dblink_send_query('link_b',$q$select public.backend_state('session_claim','{"id":"fcs_concurrent","owner_id":"00000000-0000-4000-8000-000000000001"}')$q$);
+create temporary table concurrent_claims(data jsonb);
+insert into concurrent_claims select * from dblink_get_result('link_a',false) as t(data jsonb);
+insert into concurrent_claims select * from dblink_get_result('link_b',false) as t(data jsonb);
+do $$ begin if (select count(*) from concurrent_claims)<>1 then raise exception 'concurrent session claim not exclusive'; end if; end $$;
+-- Complete from both connections with the same lease: one commit and one recorded replay.
+select dblink_disconnect('link_a');
+select dblink_disconnect('link_b');
+select dblink_connect('link_a','dbname='||current_database()||' user=postgres');
+select dblink_connect('link_b','dbname='||current_database()||' user=postgres');
+select dblink_send_query('link_a',format('select public.backend_state(%L,%L::jsonb)','session_accept',(select data||'{"accounts":[{"provider_id":"fca_concurrent","livemode":false,"name":"Synthetic concurrent","institution":"Synthetic","kind":"cash"}]}'::jsonb from concurrent_claims)));
+select dblink_send_query('link_b',format('select public.backend_state(%L,%L::jsonb)','session_accept',(select data||'{"accounts":[{"provider_id":"fca_concurrent","livemode":false,"name":"Synthetic concurrent","institution":"Synthetic","kind":"cash"}]}'::jsonb from concurrent_claims)));
+create temporary table concurrent_results(data jsonb);
+insert into concurrent_results select * from dblink_get_result('link_a') as t(data jsonb);
+insert into concurrent_results select * from dblink_get_result('link_b') as t(data jsonb);
+do $$ begin
+ if (select count(distinct data) from concurrent_results)<>1 or (select count(*) from concurrent_results)<>2 then raise exception 'concurrent completion replay differs'; end if;
+ if (select count(*) from public.accounts)<>1 or (select count(*) from private.jobs where kind='subscribe')<>1 then raise exception 'concurrent acceptance duplicated mapping or subscription'; end if;
+end $$;
+select dblink_disconnect('link_a');
+select dblink_disconnect('link_b');
+select dblink_connect('link_a','dbname='||current_database()||' user=postgres');
+select dblink_connect('link_b','dbname='||current_database()||' user=postgres');
+select dblink_send_query('link_a',$q$select public.backend_state('claim')$q$);
+select dblink_send_query('link_b',$q$select public.backend_state('claim')$q$);
+create temporary table concurrent_jobs(data jsonb);
+insert into concurrent_jobs select * from dblink_get_result('link_a') as t(data jsonb);
+insert into concurrent_jobs select * from dblink_get_result('link_b') as t(data jsonb);
+do $$ begin
+ if (select count(*) from concurrent_jobs where data->>'id' is not null)<>1 then raise exception 'concurrent workers leased same subscription'; end if;
+ if (select count(*) from private.jobs where status='processing')<>1 then raise exception 'worker claim did not persist one lease'; end if;
+end $$;
+select dblink_disconnect('link_a');
+select dblink_disconnect('link_b');
+delete from public.accounts;
+delete from private.link_sessions;
+delete from private.customers;
+delete from public.categories;
+delete from public.profiles;
+delete from private.app_owner;
+delete from auth.users;

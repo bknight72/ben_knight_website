@@ -1,4 +1,5 @@
 import { browserRuntimeReady } from "./local-readiness.ts";
+import { startStripeMock } from "./local-stripe-mock.ts";
 
 // CLI status contains disposable local keys; consume in memory, never print or persist them.
 const status = JSON.parse(await new Response(Deno.stdin.readable).text());
@@ -21,30 +22,114 @@ if (typeof status.JWT_SECRET !== "string") {
 }
 Deno.env.set("LOCAL_JWT_SECRET", status.JWT_SECRET);
 const browserEnabled = Deno.env.get("BUDGETING_BROWSER_INTEGRATION") === "true";
+const mockStripe = Deno.env.get("BUDGETING_MOCK_STRIPE") === "true";
+const mockServer = mockStripe ? startStripeMock() : undefined;
 let server: Deno.ChildProcess | undefined;
 const browserOrigin = "http://127.0.0.1:58081";
 if (browserEnabled) {
+  const variant = JSON.parse(
+    await Deno.readTextFile(
+      `${Deno.env.get("LOCAL_BROWSER_ARTIFACT")}/local-integration.json`,
+    ),
+  );
+  if (variant.mockStripe !== mockStripe) {
+    throw new Error(
+      "Local browser artifact does not match requested mock Stripe variant",
+    );
+  }
   const nginx = (await Deno.readTextFile("nginx.conf"))
     .replace("listen 8080;", "listen 127.0.0.1:58081;")
     .replace("connect-src 'self'", "connect-src 'self' http://127.0.0.1:54321");
   await Deno.writeTextFile("/run/budgeting-browser/nginx.conf", nginx);
-  const started = await new Deno.Command("docker", { args: ["run", "-d", "--name", Deno.env.get("LOCAL_BROWSER_SERVER")!, "--network", "host", "--user", "nginx", "--read-only", "--tmpfs", "/tmp/nginx:rw,uid=101,gid=101,mode=0700", "-v", `${Deno.env.get("LOCAL_BROWSER_ARTIFACT")}:/usr/share/nginx/html:ro`, "-v", `${Deno.env.get("LOCAL_BROWSER_VOLUME")}:/run/budgeting-browser:ro`, "--entrypoint", "nginx", "nginx:latest", "-c", "/run/budgeting-browser/nginx.conf", "-g", "daemon off;"], stdout: "null", stderr: "inherit" }).output();
-  if (!started.success) throw new Error("Local browser static server failed to start");
-  // Keep test-only CORS configuration out of production and out of the repository.
+  const started = await new Deno.Command("docker", {
+    args: [
+      "run",
+      "-d",
+      "--name",
+      Deno.env.get("LOCAL_BROWSER_SERVER")!,
+      "--network",
+      "host",
+      "--user",
+      "nginx",
+      "--read-only",
+      "--tmpfs",
+      "/tmp/nginx:rw,uid=101,gid=101,mode=0700",
+      "-v",
+      `${Deno.env.get("LOCAL_BROWSER_ARTIFACT")}:/usr/share/nginx/html:ro`,
+      "-v",
+      `${Deno.env.get("LOCAL_BROWSER_VOLUME")}:/run/budgeting-browser:ro`,
+      "--entrypoint",
+      "nginx",
+      "nginx:latest",
+      "-c",
+      "/run/budgeting-browser/nginx.conf",
+      "-g",
+      "daemon off;",
+    ],
+    stdout: "null",
+    stderr: "inherit",
+  }).output();
+  if (!started.success) {
+    throw new Error("Local browser static server failed to start");
+  }
+}
+if (browserEnabled || mockStripe) {
+  // The generated workdir has no private env files and is never a release artifact.
+  const workdir = `${Deno.cwd()}/build/local-supabase-harness`;
+  await Deno.mkdir(`${workdir}/supabase/functions`, { recursive: true });
+  await Deno.copyFile(
+    "supabase/config.toml",
+    `${workdir}/supabase/config.toml`,
+  );
+  async function copySources(source: string, target: string) {
+    await Deno.mkdir(target, { recursive: true });
+    for await (const entry of Deno.readDir(source)) {
+      if (entry.isDirectory) {
+        await copySources(`${source}/${entry.name}`, `${target}/${entry.name}`);
+      } else if (entry.name.endsWith(".ts")) {
+        await Deno.copyFile(
+          `${source}/${entry.name}`,
+          `${target}/${entry.name}`,
+        );
+      }
+    }
+  }
+  await copySources("supabase/functions", `${workdir}/supabase/functions`);
+  if (mockStripe) {
+    await Deno.copyFile(
+      "supabase/tests/local-stripe-boundary.ts",
+      `${workdir}/supabase/functions/_shared/local-stripe-boundary.ts`,
+    );
+    for (const name of ["api", "worker", "stripe-webhook"]) {
+      await Deno.writeTextFile(
+        `${workdir}/supabase/functions/${name}/index.ts`,
+        'import { install } from "../_shared/local-stripe-boundary.ts";\n' +
+          'import { handle } from "./handler.ts";\ninstall();\nDeno.serve((req) => handle(req));\n',
+      );
+    }
+  }
+  const envFile = `${workdir}/functions.env`;
   await Deno.writeTextFile(
-    "/run/budgeting-browser/functions.env",
-    `ALLOWED_ORIGINS=${browserOrigin}\nSTRIPE_ENABLED=false\nSTRIPE_LIVE_AUTHORIZED=false\n`,
+    envFile,
+    `ALLOWED_ORIGINS=${browserOrigin}\nSTRIPE_ENABLED=${mockStripe}\nSTRIPE_LIVE_AUTHORIZED=false\n` +
+      (mockStripe
+        ? "STRIPE_MODE=test\nSTRIPE_SECRET_KEY=sk_test_localSyntheticOnly123\nSTRIPE_WEBHOOK_SECRET=whsec_localSyntheticOnly\nWORKER_SECRET=local-synthetic-worker-only\n"
+        : ""),
     { mode: 0o600 },
   );
   const installedCli = "/opt/budgeting-cli/node_modules/.bin/supabase";
-  const hasInstalledCli = await Deno.stat(installedCli).then(() => true).catch(() => false);
+  const hasInstalledCli = await Deno.stat(installedCli).then(() => true).catch(
+    () => false,
+  );
   server = new Deno.Command(hasInstalledCli ? installedCli : "npx", {
     args: [
       ...(hasInstalledCli ? [] : ["--yes", "supabase"]),
       "functions",
       "serve",
+      "--workdir",
+      workdir,
       "--env-file",
-      "/run/budgeting-browser/functions.env",
+      envFile,
     ],
     stdout: "null",
     stderr: "inherit",
@@ -114,4 +199,5 @@ if (server) {
   server.kill("SIGTERM");
   await server.status;
 }
+if (mockServer) await mockServer.shutdown();
 Deno.exit(code);

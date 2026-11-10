@@ -6,6 +6,6 @@ supported_reporting_timezones:
 budget_rollover: false
 max_import_bytes: 5242880
 max_import_rows: 10000
-# Enable only after owner approval; STRIPE_ENABLED build define is also required.
-stripe_enabled: false
+# Capability only: build STRIPE_ENABLED defaults false; backend authorization is independent.
+stripe_enabled: true
 builder: Novacoast-VCA-805

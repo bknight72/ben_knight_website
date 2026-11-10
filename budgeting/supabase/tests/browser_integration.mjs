@@ -40,15 +40,39 @@ const context = await browser.newContext({
 const page = await context.newPage();
 const errors = [];
 page.on("pageerror", () => errors.push("browser runtime error"));
-// Refuse remote traffic rather than mock Auth, financial APIs or Stripe. All requests below are real.
+// Auth, MFA and financial APIs remain real. Only the explicit enabled variant mocks Stripe.js.
 await context.route("**/*", (route) => {
   const url = new URL(route.request().url());
+  if (fixture.mockStripe && url.href === "https://js.stripe.com/v3/") {
+    return route.fulfill({
+      contentType: "application/javascript",
+      body: `
+      window.Stripe = (key) => {
+        if (key !== 'pk_test_localSyntheticOnly123') throw new Error('Wrong synthetic public key');
+        return {collectFinancialConnectionsAccounts: async ({clientSecret}) => {
+          const sessionId = clientSecret.split('_secret_')[0];
+          await window.localStripeConsent(sessionId);
+          return {financialConnectionsSession:{accounts:[{id:'untrustedBrowserAccount'}]}};
+        }};
+      };
+    `,
+    });
+  }
   if (
     ["data:", "blob:"].includes(url.protocol) ||
     ["127.0.0.1", "localhost"].includes(url.hostname)
   ) return route.continue();
   return route.abort("blockedbyclient");
 });
+if (fixture.mockStripe) {
+  await page.exposeFunction("localStripeConsent", async (sessionId) => {
+    const response = await fetch("http://127.0.0.1:58082/control", {
+      method: "POST",
+      body: JSON.stringify({ sessionId }),
+    });
+    assert.equal(response.status, 200);
+  });
+}
 async function semantics() {
   await page.locator("flutter-view").waitFor({ timeout: 60000 });
   await page.evaluate(() =>
@@ -150,6 +174,75 @@ try {
   const rows = await check.json();
   assert.equal(rows.length, 1);
   assert.equal(rows[0].owner_id, fixture.ownerId);
+  if (fixture.mockStripe) {
+    // Interrupt only browser completion dispatch, after synthetic bank consent.
+    // Reload must recover the server's pending session without another Stripe modal.
+    let interrupted = false;
+    await page.route("**/connections/complete", (route) => {
+      interrupted = true;
+      return route.abort("failed");
+    });
+    await click("Connect bank");
+    await click("Confirm");
+    await page.waitForResponse((response) =>
+      response.url().endsWith("/connections/pending") &&
+      response.status() === 200
+    );
+    await page.getByRole("button", { name: "Retry completion", exact: true })
+      .waitFor();
+    assert.ok(interrupted, "Completion interruption was not exercised");
+    await page.unroute("**/connections/complete");
+    await page.reload({ waitUntil: "networkidle" });
+    await semantics();
+    // Memory-only auth deliberately requires a fresh password + TOTP after browser closure.
+    await authenticate(fixture.password);
+    await page.getByText("Accounts", { exact: true }).click();
+    await page.getByRole("button", { name: "Retry completion", exact: true })
+      .waitFor();
+    const accepted = page.waitForResponse((response) =>
+      response.url().endsWith("/connections/complete")
+    );
+    await click("Retry completion");
+    await click("Confirm");
+    const completion = await accepted;
+    assert.equal(completion.status(), 200);
+    const completed = await completion.json();
+    assert.equal(completed.status, "queued");
+    assert.equal(completed.accountIds.length, 1);
+    const linked = await fetch(
+      `${fixture.supabaseUrl}/rest/v1/accounts?id=eq.${
+        completed.accountIds[0]
+      }&select=sync_error`,
+      {
+        headers: {
+          apikey: fixture.publishableKey,
+          authorization: `Bearer ${
+            (await completion.request().allHeaders()).authorization.split(
+              " ",
+            )[1]
+          }`,
+        },
+      },
+    );
+    assert.equal(linked.status, 200);
+    assert.equal((await linked.json())[0].sync_error, "subscription_pending");
+    const inspect = await (await fetch("http://127.0.0.1:58082/inspect"))
+      .json();
+    assert.equal(inspect.customerCount, 1, "Browser resume recreated customer");
+    assert.ok(
+      !inspect.requests.some((r) => r.path.endsWith("/refresh")),
+      "Browser linking bought a balance",
+    );
+    assert.equal(
+      await page.evaluate(() =>
+        JSON.stringify(localStorage).includes("secret")
+      ),
+      false,
+    );
+    console.log(
+      "PASS enabled Chromium + real local MFA/functions/Postgres: mocked Stripe.js consent, interrupted completion, reload/reauth, pending-session resume, queued response and persisted subscription status, no paid balance request",
+    );
+  }
   await page.getByText("Sign out", { exact: true }).click();
   await page.getByText("Welcome to your ledger.", { exact: true }).waitFor();
   assert.equal(

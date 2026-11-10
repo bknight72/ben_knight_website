@@ -17,13 +17,14 @@ const response = (description: string, schema: unknown) => ({
 });
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const errorResponses = Object.fromEntries(
-  ["401", "403", "404", "422", "429", "503"].map((s) => [
+  ["401", "403", "404", "409", "422", "429", "503"].map((s) => [
     s,
     response(
       {
         "401": "Session missing or expired",
         "403": "Provisioned owner with MFA required",
         "404": "Resource not found",
+        "409": "Completion in progress or connection inactive",
         "422": "Validation failed",
         "429": "Cooldown, monthly cap, or provider throttling",
         "503": "Database/provider disabled or unavailable",
@@ -309,7 +310,7 @@ export const openapi = {
     },
     "/api/v1/connections/complete": {
       post: post(
-        "Verify owned active accounts, paginate, map, subscribe and queue ingestion",
+        "Verify all owned selections and durably queue subscriptions and ingestion; replay returns the recorded acceptance without reactivating accounts",
         object({
           sessionId: string(
             "Previously created owned Stripe session ID",
@@ -326,6 +327,37 @@ export const openapi = {
         }),
       ),
     },
+    "/api/v1/connections/pending": {
+      get: {
+        summary:
+          "List owner-initiated sessions available for explicit completion retry, without client secrets",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          "200": response(
+            "Resumable owned sessions",
+            object({
+              sessions: {
+                type: "array",
+                description:
+                  "Unaccepted connection sessions; no automatic subscriptions",
+                items: object({
+                  sessionId: string("Owned session ID", "fcsess_example"),
+                  createdAt: {
+                    ...string(
+                      "Session creation timestamp",
+                      "2026-11-10T00:00:00Z",
+                    ),
+                    format: "date-time",
+                  },
+                  status: string("Sanitized completion state", "pending"),
+                }),
+              },
+            }),
+          ),
+          ...errorResponses,
+        },
+      },
+    },
     "/api/v1/accounts/{id}/balance-refresh": {
       parameters: accountParameter,
       post: post(
@@ -339,6 +371,25 @@ export const openapi = {
           },
         }),
         ref("Queued"),
+        true,
+      ),
+    },
+    "/api/v1/accounts/{id}/subscription-retry": {
+      parameters: accountParameter,
+      post: post(
+        "Explicitly retry an accepted transaction subscription using its existing durable identity; no new link or balance refresh",
+        object({
+          confirmCost: {
+            type: "boolean",
+            description:
+              "Owner confirms ongoing daily transaction feed charges",
+            example: true,
+          },
+        }),
+        object({
+          requestId: uuid("Existing subscription job"),
+          status: string("Retry state", "queued"),
+        }),
         true,
       ),
     },

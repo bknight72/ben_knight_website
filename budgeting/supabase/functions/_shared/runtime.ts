@@ -53,8 +53,33 @@ export class Database {
           "Balance refresh limit reached. Try again after the cooldown or next UTC month.",
         );
       }
-      if (/account_not_found|batch_not_found/.test(error.message || "")) {
+      if (
+        /account_not_found|batch_not_found|session_not_found/.test(
+          error.message || "",
+        )
+      ) {
         throw new ApiError(404, "not_found", "Resource not found.");
+      }
+      if (/session_busy|completion_busy/.test(error.message || "")) {
+        throw new ApiError(
+          409,
+          "completion_busy",
+          "Connection completion is already in progress. Retry shortly.",
+        );
+      }
+      if (/subscription_not_retryable/.test(error.message || "")) {
+        throw new ApiError(
+          409,
+          "subscription_not_retryable",
+          "There is no failed transaction subscription to retry. Refresh account status.",
+        );
+      }
+      if (/disconnecting|connection_inactive/.test(error.message || "")) {
+        throw new ApiError(
+          409,
+          "connection_inactive",
+          "The connection is inactive or disconnecting.",
+        );
       }
       throw new ApiError(
         503,
@@ -148,9 +173,9 @@ export async function authorize(req: Request, db: Database): Promise<string> {
 
 export class Stripe {
   live: boolean;
-  constructor(public fetcher: typeof fetch = fetch) {
-    const mode = stripeMode(env);
-    if (!mode.enabled) {
+  constructor(public fetcher: typeof fetch = fetch, cleanup = false) {
+    const mode = stripeMode(env, cleanup);
+    if (!mode.enabled && !cleanup) {
       throw new ApiError(
         503,
         "stripe_disabled",
@@ -158,6 +183,15 @@ export class Stripe {
       );
     }
     this.live = mode.live;
+  }
+  requireActivity() {
+    if (!stripeMode(env).enabled) {
+      throw new ApiError(
+        503,
+        "stripe_disabled",
+        "New banking activity is disabled; disconnect cleanup remains available.",
+      );
+    }
   }
   async call(
     path: string,
@@ -171,26 +205,62 @@ export class Stripe {
         encoded.set(key, String(value));
       }
     }
-    const response = await this.fetcher(
-      `https://api.stripe.com/v1/${path}${
-        method === "GET" && encoded.size ? `?${encoded}` : ""
-      }`,
-      {
-        method,
-        headers: {
-          Authorization: `Bearer ${env("STRIPE_SECRET_KEY")}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": "novacoast-budgeting/1.0",
-          ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
-        },
-        body: method === "GET" ? undefined : encoded.toString(),
-        signal: AbortSignal.timeout(15000),
-      },
-    );
+    let response: Response | undefined;
+    const attempts = method === "GET" || idempotencyKey ? 3 : 1;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      try {
+        response = await this.fetcher(
+          `https://api.stripe.com/v1/${path}${
+            method === "GET" && encoded.size ? `?${encoded}` : ""
+          }`,
+          {
+            method,
+            headers: {
+              Authorization: `Bearer ${env("STRIPE_SECRET_KEY")}`,
+              "Stripe-Version": "2024-06-20",
+              "Content-Type": "application/x-www-form-urlencoded",
+              "User-Agent": "novacoast-budgeting/1.0",
+              ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+            },
+            body: method === "GET" ? undefined : encoded.toString(),
+            signal: AbortSignal.timeout(15000),
+          },
+        );
+      } catch {
+        response = undefined;
+        if (attempt === attempts - 1) {
+          throw new ApiError(
+            503,
+            "provider_timeout",
+            "The banking provider request timed out. Retry the existing operation.",
+          );
+        }
+      }
+      if (
+        response?.ok ||
+        (response && response.status !== 429 && response.status < 500)
+      ) break;
+      if (attempt < attempts - 1) {
+        await response?.body?.cancel();
+        await new Promise((resolve) => setTimeout(resolve, 100 * 2 ** attempt));
+      }
+    }
+    if (!response) {
+      throw new ApiError(
+        503,
+        "provider_timeout",
+        "The banking provider request timed out.",
+      );
+    }
     if (!response.ok) {
+      await response.body?.cancel();
       throw new ApiError(
         response.status === 429 ? 429 : 503,
-        "provider_unavailable",
+        response.status === 429
+          ? "provider_rate_limited"
+          : response.status < 500
+          ? "provider_rejected"
+          : "provider_unavailable",
         "The banking provider is temporarily unavailable.",
       );
     }

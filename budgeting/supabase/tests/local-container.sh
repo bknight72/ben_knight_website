@@ -13,4 +13,4 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 supabase_cli start -x studio,imgproxy,storage-api,realtime,postgres-meta,logflare,vector,supavisor
-supabase_cli status -o json | deno run --allow-read --allow-write=/run/budgeting-browser --allow-env --allow-net --allow-run supabase/tests/local-runner.ts
+supabase_cli status -o json | deno run --allow-read --allow-write=/run/budgeting-browser,build/local-supabase-harness --allow-env --allow-net --allow-run supabase/tests/local-runner.ts

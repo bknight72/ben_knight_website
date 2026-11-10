@@ -30,14 +30,16 @@ export function routeName(path: string): string {
     "/api/v1/usage",
     "/api/v1/connections/session",
     "/api/v1/connections/complete",
+    "/api/v1/connections/pending",
     "/api/v1/imports/preview",
     "/api/v1/imports/commit",
   ];
   if (names.includes(path)) return path;
   if (
-    /^\/api\/v1\/accounts\/[^/]+\/(balance-refresh|disconnect|delete)$/.test(
-      path,
-    )
+    /^\/api\/v1\/accounts\/[^/]+\/(balance-refresh|subscription-retry|disconnect|delete)$/
+      .test(
+        path,
+      )
   ) return "/api/v1/accounts/:id/" + path.split("/").pop();
   if (/^\/api\/v1\/imports\/[^/]+\/undo$/.test(path)) {
     return "/api/v1/imports/:id/undo";
@@ -143,102 +145,119 @@ async function completeSession(
     typeof body.sessionId !== "string" ||
     !/^fcsess_[A-Za-z0-9]+$/.test(body.sessionId)
   ) invalid("Invalid connection session.");
-  const saved = await db.state("session_get", {
+  const saved = await db.state("session_claim", {
     id: body.sessionId,
     owner_id: ownerId,
   });
   if (!saved.id) {
     throw new ApiError(404, "not_found", "Connection session not found.");
   }
-  const session = await stripe.call(
-    `financial_connections/sessions/${body.sessionId}`,
-  );
-  if (
-    session.account_holder?.customer !== saved.customer_id ||
-    session.livemode !== stripe.live
-  ) {
-    throw new ApiError(
-      403,
-      "session_mismatch",
-      "Connection session does not belong to this owner.",
+  if (saved.completion_result) return saved.completion_result;
+  const claim = {
+    id: body.sessionId,
+    owner_id: ownerId,
+    claim_token: saved.claim_token,
+  };
+  try {
+    const session = await stripe.call(
+      `financial_connections/sessions/${body.sessionId}`,
     );
-  }
-  // FC Sessions have no status attribute. Completion is established by owned, active selected accounts.
-  if (!session.accounts?.data?.length) {
-    invalid("No linked accounts were selected.");
-  }
-  let page = session.accounts;
-  const accounts: string[] = [];
-  for (let pages = 0;; pages++) {
-    if (pages >= 20) {
+    if (
+      session.account_holder?.customer !== saved.customer_id ||
+      session.livemode !== stripe.live
+    ) {
       throw new ApiError(
-        422,
-        "account_limit",
-        "The connection contains too many accounts.",
+        403,
+        "session_mismatch",
+        "Connection session does not belong to this owner.",
       );
     }
-    for (const selected of page.data) {
-      const a = await stripe.call(
-        `financial_connections/accounts/${encodeURIComponent(selected.id)}`,
-      );
-      if (
-        a.account_holder?.customer !== saved.customer_id ||
-        a.status !== "active" || !["cash", "credit"].includes(a.category) ||
-        !a.permissions?.includes("transactions")
-      ) {
-        invalid(
-          "Linked account is not active or does not support the requested read-only features.",
-        );
-      }
-      const mapping = await db.state("map_account", {
-        owner_id: ownerId,
-        provider_id: a.id,
-        name: String(a.display_name || "Linked account").slice(0, 120),
-        institution: String(a.institution_name || "").slice(0, 120),
-        last_four: /^\d{4}$/.test(a.last4) ? a.last4 : null,
-        kind: a.category,
-        livemode: stripe.live,
-      });
-      if (mapping.owner_id !== ownerId || mapping.livemode !== stripe.live) {
+    // FC Sessions have no status attribute. Completion is established by owned, active selected accounts.
+    if (!session.accounts?.data?.length) {
+      invalid("No linked accounts were selected.");
+    }
+    let page = session.accounts;
+    const accounts: RecordData[] = [];
+    for (let pages = 0;; pages++) {
+      if (pages >= 20) {
         throw new ApiError(
-          403,
-          "mapping_mismatch",
-          "Account mapping does not belong to this environment.",
+          422,
+          "account_limit",
+          "The connection contains too many accounts.",
         );
       }
-      if (!mapping.subscribed) {
-        await stripe.call(
-          `financial_connections/accounts/${a.id}/subscribe`,
-          "POST",
-          { "features[]": "transactions" },
-          `subscribe:${a.id}`,
+      if (!Array.isArray(page.data) || (page.has_more && !page.data.length)) {
+        throw new ApiError(
+          503,
+          "invalid_provider_page",
+          "Provider returned an invalid account page.",
         );
-        await db.state("subscribed", { account_id: mapping.account_id });
       }
-      await db.state("enqueue", {
-        account_id: mapping.account_id,
-        kind: "sync",
-        dedupe_key: `session:${body.sessionId}:${a.id}`,
+      for (const selected of page.data) {
+        if (
+          typeof selected.id !== "string" ||
+          !/^fca_[A-Za-z0-9]+$/.test(selected.id)
+        ) {
+          throw new ApiError(
+            503,
+            "invalid_provider_page",
+            "Provider returned an invalid account identity.",
+          );
+        }
+        await db.state("session_renew", claim);
+        const a = await stripe.call(
+          `financial_connections/accounts/${encodeURIComponent(selected.id)}`,
+        );
+        if (
+          a.id !== selected.id ||
+          a.account_holder?.customer !== saved.customer_id ||
+          a.status !== "active" || !["cash", "credit"].includes(a.category) ||
+          a.livemode !== stripe.live ||
+          !a.permissions?.includes("transactions") ||
+          !a.permissions?.includes("balances")
+        ) {
+          invalid(
+            "Linked account is not active or does not support the requested read-only features.",
+          );
+        }
+        accounts.push({
+          provider_id: a.id,
+          name: String(a.display_name || "Linked account").slice(0, 120),
+          institution: String(a.institution_name || "").slice(0, 120),
+          last_four: /^\d{4}$/.test(a.last4) ? a.last4 : null,
+          kind: a.category,
+          livemode: stripe.live,
+        });
+      }
+      if (!page.has_more) break;
+      const last = page.data.at(-1)?.id;
+      if (!last) {
+        throw new ApiError(
+          503,
+          "invalid_provider_page",
+          "Provider returned an invalid account page.",
+        );
+      }
+      await db.state("session_renew", claim);
+      page = await stripe.call("financial_connections/accounts", "GET", {
+        session: body.sessionId,
+        starting_after: last,
+        limit: 100,
       });
-      accounts.push(mapping.account_id);
     }
-    if (!page.has_more) break;
-    const last = page.data.at(-1)?.id;
-    if (!last) {
-      throw new ApiError(
-        503,
-        "invalid_provider_page",
-        "Provider returned an invalid account page.",
-      );
-    }
-    page = await stripe.call("financial_connections/accounts", "GET", {
-      session: body.sessionId,
-      starting_after: last,
-      limit: 100,
+    return await db.state("session_accept", {
+      id: body.sessionId,
+      owner_id: ownerId,
+      claim_token: saved.claim_token,
+      accounts,
     });
+  } finally {
+    try {
+      await db.state("session_release", claim);
+    } catch {
+      // A lost response must not replace a durable acceptance. The claim also expires.
+    }
   }
-  await db.state("session_done", { id: body.sessionId });
-  return { accountIds: accounts, status: "queued" };
 }
 
 export async function handle(
@@ -305,7 +324,11 @@ export async function handle(
       );
     } else {
       const ownerId = await authorize(req, db);
-      if (req.method === "GET" && path === "/api/v1/usage") {
+      if (req.method === "GET" && path === "/api/v1/connections/pending") {
+        response = json(
+          await db.state("session_pending", { owner_id: ownerId }),
+        );
+      } else if (req.method === "GET" && path === "/api/v1/usage") {
         // Use the verified caller JWT so the narrow RPC independently enforces RLS identity/MFA.
         response = json(
           await new Database(
@@ -405,7 +428,7 @@ export async function handle(
             await completeSession(body, ownerId, db, new Stripe()),
           );
         } else if (
-          /^\/api\/v1\/accounts\/[^/]+\/(balance-refresh|disconnect|delete)$/
+          /^\/api\/v1\/accounts\/[^/]+\/(balance-refresh|subscription-retry|disconnect|delete)$/
             .test(path)
         ) {
           const accountId = id(path.split("/")[4]);
@@ -424,7 +447,10 @@ export async function handle(
             if (account.source !== "stripe") {
               invalid("This action requires a connected Stripe account.");
             }
-            const stripe = new Stripe();
+            const stripe = new Stripe(
+              fetch,
+              path.endsWith("/disconnect") || deleteLocal,
+            );
             const mapping = await db.state("mapping", {
               account_id: accountId,
             });
@@ -437,7 +463,17 @@ export async function handle(
                 "Provider mapping does not match this owner and mode.",
               );
             }
-            if (path.endsWith("/balance-refresh")) {
+            if (path.endsWith("/subscription-retry")) {
+              if (body.confirmCost !== true) {
+                invalid(
+                  "Explicit ongoing transaction feed cost confirmation is required.",
+                );
+              }
+              response = json(
+                await db.state("subscription_retry", { account_id: accountId }),
+                202,
+              );
+            } else if (path.endsWith("/balance-refresh")) {
               if (body.confirmCost !== true) {
                 invalid(
                   "Explicit balance refresh cost confirmation is required.",
@@ -449,6 +485,19 @@ export async function handle(
               const provider = await stripe.call(
                 `financial_connections/accounts/${mapping.provider_id}`,
               );
+              if (
+                provider.status !== "active" ||
+                provider.livemode !== stripe.live ||
+                provider.account_holder?.customer !== mapping.customer_id ||
+                !provider.permissions?.includes("balances") ||
+                !provider.permissions?.includes("transactions")
+              ) {
+                throw new ApiError(
+                  409,
+                  "connection_inactive",
+                  "The provider connection is inactive or lacks permissions.",
+                );
+              }
               const next = provider.balance_refresh?.next_refresh_available_at;
               if (
                 provider.balance_refresh && (!next || next * 1000 > Date.now())

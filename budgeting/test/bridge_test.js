@@ -105,13 +105,13 @@ Deno.test("Stripe bridge passes only public key and ephemeral client secret", as
       },
     };
   });
-  const session = await bridge.linkStripe(
+  const status = await bridge.linkStripe(
     "pk_test_synthetic",
     "fcsess_secret_synthetic",
   );
   assert.equal(usedKey, "pk_test_synthetic");
   assert.deepEqual(usedOptions, { clientSecret: "fcsess_secret_synthetic" });
-  assert.equal(session.id, "fcsess_test");
+  assert.equal(status, "completed");
 });
 
 for (
@@ -123,9 +123,47 @@ for (
     const bridge = setup(() => ({
       collectFinancialConnectionsAccounts: () => Promise.resolve(result),
     }));
-    await assert.rejects(
-      () => bridge.linkStripe("pk_test", "secret"),
-      /cancelled or failed/,
+    assert.equal(
+      await bridge.linkStripe("pk_test", "secret"),
+      result.error ? "failed" : "cancelled",
     );
   });
 }
+
+Deno.test("Stripe script failure is sanitized and retryable", async () => {
+  const bridge = setup(null, {
+    createElement() {
+      return { remove() {} };
+    },
+    head: {
+      appendChild(script) {
+        script.onerror(new Error("private detail"));
+      },
+    },
+  });
+  assert.equal(await bridge.linkStripe("pk_test", "secret"), "load_failed");
+});
+
+Deno.test("logout discards a late modal result without returning account attributes", async () => {
+  let finish;
+  const bridge = setup(() => ({
+    collectFinancialConnectionsAccounts() {
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    },
+  }));
+  const pending = bridge.linkStripe("pk_test", "secret");
+  bridge.clearStripe();
+  finish({ financialConnectionsSession: { accounts: [{ id: "private" }] } });
+  assert.equal(await pending, "cancelled");
+});
+
+Deno.test("provider exceptions never leak messages or secrets", async () => {
+  const bridge = setup(() => ({
+    collectFinancialConnectionsAccounts() {
+      throw new Error("secret financial content");
+    },
+  }));
+  assert.equal(await bridge.linkStripe("pk_test", "secret"), "failed");
+});

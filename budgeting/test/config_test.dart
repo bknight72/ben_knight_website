@@ -4,6 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:private_budgeting/config.dart';
 import 'package:private_budgeting/main.dart' as entry;
 import 'package:private_budgeting/app.dart';
+import 'package:private_budgeting/repository.dart';
+import 'workspace_test.dart' show FixtureRepository;
+
+class ConfigRepository extends FixtureRepository {
+  ConfigRepository() : super(empty: true);
+  @override
+  Future<List<Map<String, dynamic>>> pendingConnections() async => [];
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -21,12 +29,38 @@ builder: Novacoast-VCA-805
     final config = await AppConfig.load();
     expect(config.currency, 'USD');
     expect(config.reportingTimezone, 'America/Denver');
-    expect(config.stripeAllowed, isFalse);
+    expect(config.stripeAllowed, isTrue);
+    expect(const AppConfig().stripeAllowed, isFalse);
     expect(
         AppConfig.parse(valid.replaceFirst(
                 'stripe_enabled: false', 'stripe_enabled: true'))
             .stripeAllowed,
         isTrue);
+  });
+  testWidgets('YAML capability and build flag/key must all permit linking',
+      (tester) async {
+    tester.view.physicalSize = const Size(1440, 1100);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    for (final allowed in [false, true]) {
+      final repo = ConfigRepository();
+      addTearDown(repo.client.dispose);
+      await tester.pumpWidget(MaterialApp(
+          home: LedgerShell(
+              key: ValueKey(allowed),
+              repository: repo,
+              onLogout: () async {},
+              config: AppConfig(stripeAllowed: allowed))));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Accounts').first);
+      await tester.pumpAndSettle();
+      final button = tester.widget<OutlinedButton>(
+          find.widgetWithText(OutlinedButton, 'Connect bank'));
+      expect(button.onPressed != null,
+          allowed && stripeEnabled && stripeKey.isNotEmpty);
+      await tester.pumpWidget(const SizedBox());
+    }
   });
   test('unsupported or secret-bearing YAML fails closed', () {
     for (final text in [

@@ -49,6 +49,7 @@ end $$;
 select public.backend_state('webhook','{"id":"evt_synthetic","type":"test","account_id":"10000000-0000-4000-8000-000000000001","kind":"sync"}');
 select public.backend_state('webhook','{"id":"evt_synthetic","type":"test","account_id":"10000000-0000-4000-8000-000000000001","kind":"sync"}');
 select pg_temp.assert((select count(*)=1 from private.jobs where dedupe_key='event:evt_synthetic'),'webhook replay idempotent');
+update private.jobs set status='done' where kind='balance';
 select public.backend_state('claim');
 select pg_temp.assert((select count(*)=1 from private.jobs where status='processing'),'one active account lease');
 select pg_temp.assert(public.backend_state('claim')='{}'::jsonb,'cannot lease same account twice');

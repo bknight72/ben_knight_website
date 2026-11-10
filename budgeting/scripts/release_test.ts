@@ -2,13 +2,18 @@ import { strict as assert } from "node:assert";
 import {
   allowedOrigin,
   backendHealth,
+  checkPublicConfig,
+  checkPublicJs,
   manifest,
   preflight,
+  publicConfig,
   smoke,
   supabaseTarget,
   target,
   verify,
+  writePublicConfig,
 } from "./release.ts";
+import { stripeMode } from "../supabase/functions/_shared/core.ts";
 
 const env = {
   SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
@@ -34,6 +39,14 @@ Deno.test("workflow allows only master pushes and manual release events with gat
       /github\.event_name == 'push' \|\| github\.event_name == 'workflow_dispatch'/,
     );
     assert.match(job, /needs:/);
+    assert.ok(
+      job.includes("STRIPE_ENABLED: ${{ vars.STRIPE_ENABLED || 'false' }}"),
+    );
+    assert.ok(
+      job.includes(
+        "STRIPE_PUBLISHABLE_KEY: ${{ vars.STRIPE_PUBLISHABLE_KEY || '' }}",
+      ),
+    );
   }
   assert.match(
     workflow,
@@ -45,6 +58,12 @@ Deno.test("workflow allows only master pushes and manual release events with gat
   );
   assert.match(workflow, /retention-days: 30/);
   assert.match(workflow, /Hosted bytes|RELEASE_ROOT=/);
+  assert.match(
+    workflow,
+    /-e SUPABASE_URL -e SUPABASE_PUBLISHABLE_KEY -e STRIPE_ENABLED -e STRIPE_PUBLISHABLE_KEY \\\s+denoland\/deno:latest run --allow-env --allow-read \\\s+budgeting\/scripts\/release.ts verify/,
+  );
+  const validation = workflow.split("\n  release-build:")[0];
+  assert.doesNotMatch(validation, /vars\.STRIPE_|secrets\./);
   const backend = workflow.indexOf(
     "name: Validate Supabase target and deploy backend functions",
   );
@@ -189,8 +208,9 @@ Deno.test("standalone backend gate is anonymous and requires connected JSON read
     globalThis.fetch = original;
   }
 });
-Deno.test("release preflight accepts only configured CSV release values", () => {
+Deno.test("release preflight preserves disabled defaults and configured CSV release values", () => {
   preflight(env);
+  preflight({ ...env, STRIPE_ENABLED: undefined });
   for (
     const patch of [
       { SUPABASE_URL: "" },
@@ -211,6 +231,83 @@ Deno.test("release preflight accepts only configured CSV release values", () => 
       { STRIPE_PUBLISHABLE_KEY: "pk_test_not_allowed" },
     ]
   ) assert.throws(() => preflight({ ...env, ...patch }));
+});
+Deno.test("live opt-in rejects unsafe keys and flags without credential assertion diffs", () => {
+  const live = {
+    ...env,
+    STRIPE_ENABLED: "true",
+    STRIPE_PUBLISHABLE_KEY: "pk_live_abcdefghijklmnopqrstuvwxyz012345",
+  };
+  preflight(live);
+  for (
+    const key of [
+      "",
+      "pk_live_short",
+      "pk_test_abcdefghijklmnopqrstuvwxyz",
+      // Assemble invalid synthetic credentials so scanners do not mistake fixtures for secrets.
+      ["sk", "live", "synthetic"].join("_"),
+      ["rk", "live", "synthetic"].join("_"),
+      ["pk", "live", "yourplaceholderkey123456789"].join("_"),
+      "pk_live_example12345678901234567890",
+      "pk_live_abcdefghijklmnopqrst_uvwx",
+      "pk_live_abcdefghijklmnopqrstuvwxyz\n",
+    ]
+  ) {
+    assert.throws(
+      () => preflight({ ...live, STRIPE_PUBLISHABLE_KEY: key }),
+      (error: Error) => {
+        assert.equal(
+          error.message,
+          "Invalid public Stripe release configuration; values withheld.",
+        );
+        if (key) assert.ok(!error.message.includes(key));
+        return true;
+      },
+    );
+  }
+  for (const flag of ["TRUE", "1", "", "yes"]) {
+    assert.throws(() => preflight({ ...live, STRIPE_ENABLED: flag }));
+  }
+  assert.throws(() => preflight({ ...live, STRIPE_ENABLED: "false" }));
+  checkPublicJs(
+    `${live.SUPABASE_URL} ${live.SUPABASE_PUBLISHABLE_KEY} ${live.STRIPE_PUBLISHABLE_KEY}`,
+    live,
+  );
+  assert.throws(() =>
+    checkPublicJs(`${env.SUPABASE_URL} ${env.SUPABASE_PUBLISHABLE_KEY}`, live)
+  );
+  assert.throws(() =>
+    checkPublicJs(
+      `${env.SUPABASE_URL} ${env.SUPABASE_PUBLISHABLE_KEY} pk_test_unexpected`,
+      env,
+    )
+  );
+  assert.throws(
+    () => checkPublicConfig(publicConfig(live), env),
+    /mismatch; values withheld/,
+  );
+});
+Deno.test("public capability never replaces independent backend live authorization", () => {
+  for (const enabled of ["false", "true"]) {
+    for (const authorized of ["false", "true"]) {
+      const backend = {
+        STRIPE_ENABLED: enabled,
+        STRIPE_MODE: "live",
+        STRIPE_LIVE_AUTHORIZED: authorized,
+        STRIPE_SECRET_KEY: "rk_live_synthetic",
+      };
+      if (enabled === "true" && authorized === "false") {
+        assert.throws(() =>
+          stripeMode((key) => backend[key as keyof typeof backend])
+        );
+      } else {
+        assert.equal(
+          stripeMode((key) => backend[key as keyof typeof backend]).enabled,
+          enabled === "true",
+        );
+      }
+    }
+  }
 });
 Deno.test("hosted smoke URL cannot leak bypass credentials to arbitrary origins", () => {
   // The workflow verifies deployment ownership via the authenticated API.
@@ -311,6 +408,7 @@ Deno.test("hosted checks verify headers/configuration and isolate protection byp
   const release = await Deno.makeTempDir();
   const headers =
     JSON.parse(await Deno.readTextFile("vercel.json")).headers[0].headers;
+  let expectedEnv = { ...env, STRIPE_PUBLISHABLE_KEY: "" };
   try {
     globalThis.fetch = async (input, init) => {
       const url = new URL(String(input));
@@ -324,8 +422,10 @@ Deno.test("hosted checks verify headers/configuration and isolate protection byp
       }
       assert.equal(bypass, "synthetic-bypass");
       return new Response(
-        url.pathname.endsWith(".js")
-          ? `${env.SUPABASE_URL} ${env.SUPABASE_PUBLISHABLE_KEY}`
+        url.pathname.endsWith(".json")
+          ? JSON.stringify(publicConfig(expectedEnv))
+          : url.pathname.endsWith(".js")
+          ? `${expectedEnv.SUPABASE_URL} ${expectedEnv.SUPABASE_PUBLISHABLE_KEY} ${expectedEnv.STRIPE_PUBLISHABLE_KEY}`
           : "<html>synthetic</html>",
         {
           headers: {
@@ -334,7 +434,9 @@ Deno.test("hosted checks verify headers/configuration and isolate protection byp
                 h: { key: string; value: string },
               ) => [h.key, h.value]),
             ),
-            "Content-Type": url.pathname.endsWith(".js")
+            "Content-Type": url.pathname.endsWith(".json")
+              ? "application/json"
+              : url.pathname.endsWith(".js")
               ? "application/javascript"
               : "text/html",
           },
@@ -346,6 +448,21 @@ Deno.test("hosted checks verify headers/configuration and isolate protection byp
       VERCEL_PROJECT_NAME: "ledger",
       VERCEL_AUTOMATION_BYPASS_SECRET: "synthetic-bypass",
     });
+    expectedEnv = {
+      ...env,
+      STRIPE_ENABLED: "true",
+      STRIPE_PUBLISHABLE_KEY: "pk_live_abcdefghijklmnopqrstuvwxyz012345",
+    };
+    await smoke("https://ledger-abc.vercel.app", {
+      ...expectedEnv,
+      VERCEL_AUTOMATION_BYPASS_SECRET: "synthetic-bypass",
+    });
+    await assert.rejects(() =>
+      smoke("https://ledger-abc.vercel.app", {
+        ...env,
+        VERCEL_AUTOMATION_BYPASS_SECRET: "synthetic-bypass",
+      }), /public release evidence/);
+    expectedEnv = { ...env, STRIPE_PUBLISHABLE_KEY: "" };
     await Deno.writeTextFile(
       `${release}/manifest.json`,
       JSON.stringify({
@@ -387,12 +504,12 @@ Deno.test("hosted checks verify headers/configuration and isolate protection byp
     await Deno.remove(release, { recursive: true });
   }
 });
-Deno.test("release manifest verifies exact files and source and rejects mutation", async () => {
+Deno.test("release manifest binds tested public config, exact files and source and rejects mutation", async () => {
   const root = await Deno.makeTempDir();
   const sha = "a".repeat(40);
   try {
     await Deno.mkdir(`${root}/.vercel/output/static`, { recursive: true });
-    await assert.rejects(() => manifest(root, sha, "synthetic"));
+    await assert.rejects(() => manifest(root, sha, "synthetic", env));
     await Deno.writeTextFile(
       `${root}/.vercel/output/config.json`,
       JSON.stringify({
@@ -405,25 +522,64 @@ Deno.test("release manifest verifies exact files and source and rejects mutation
     for (const name of ["index.html", "main.dart.js"]) {
       await Deno.writeTextFile(
         `${root}/.vercel/output/static/${name}`,
-        "synthetic",
+        `${env.SUPABASE_URL} ${env.SUPABASE_PUBLISHABLE_KEY}`,
       );
     }
-    await manifest(root, sha, "synthetic");
-    await verify(root, sha);
+    const staticRoot = `${root}/.vercel/output/static`;
+    await Deno.mkdir(`${staticRoot}/assets`);
+    await Deno.writeTextFile(
+      `${staticRoot}/assets/config.yaml`,
+      "stripe_enabled: false\n",
+    );
+    await assert.rejects(
+      () => writePublicConfig(staticRoot, env),
+      /capability gate/,
+    );
+    await Deno.writeTextFile(
+      `${staticRoot}/assets/config.yaml`,
+      "stripe_enabled: true\n",
+    );
+    await writePublicConfig(staticRoot, env);
+    await manifest(root, sha, "synthetic", env);
+    await verify(root, sha, env);
+    const live = {
+      ...env,
+      STRIPE_ENABLED: "true",
+      STRIPE_PUBLISHABLE_KEY: "pk_live_abcdefghijklmnopqrstuvwxyz012345",
+    };
+    await assert.rejects(
+      () => verify(root, sha, live),
+      /configuration mismatch/,
+    );
+    await assert.rejects(
+      () => manifest(root, sha, "synthetic", live),
+      /configuration mismatch/,
+    );
     await Deno.writeTextFile(`${root}/vercel.json`, "{}");
-    await assert.rejects(() => verify(root, sha));
+    await assert.rejects(() => verify(root, sha, env));
     await Deno.remove(`${root}/vercel.json`);
     await Deno.writeTextFile(`${root}/.vercel/project.json`, "{}");
-    await assert.rejects(() => verify(root, sha));
+    await assert.rejects(() => verify(root, sha, env));
     await Deno.remove(`${root}/.vercel/project.json`);
-    await assert.rejects(() => verify(root, "b".repeat(40)));
+    await assert.rejects(() => verify(root, "b".repeat(40), env));
     await Deno.writeTextFile(
       `${root}/.vercel/output/static/main.dart.js`,
       "changed",
     );
-    await assert.rejects(() => verify(root, sha));
+    await assert.rejects(() => verify(root, sha, env));
+    await Deno.writeTextFile(
+      `${staticRoot}/main.dart.js`,
+      `${env.SUPABASE_URL} ${env.SUPABASE_PUBLISHABLE_KEY} ${live.STRIPE_PUBLISHABLE_KEY}`,
+    );
+    await writePublicConfig(staticRoot, live);
+    await manifest(root, sha, "synthetic", live);
+    await verify(root, sha, live);
+    await assert.rejects(
+      () => verify(root, sha, env),
+      /configuration mismatch/,
+    );
     await Deno.symlink("index.html", `${root}/.vercel/output/static/link`);
-    await assert.rejects(() => manifest(root, sha, "synthetic"));
+    await assert.rejects(() => manifest(root, sha, "synthetic", live));
   } finally {
     await Deno.remove(root, { recursive: true });
   }

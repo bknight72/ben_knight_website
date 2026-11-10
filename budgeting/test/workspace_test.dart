@@ -16,15 +16,21 @@ class FixtureRepository extends LedgerRepository {
             isolate: TestJsonIsolate(),
             authOptions: const AuthClientOptions(autoRefreshToken: false)));
   @override
-  Future<Json> api(String path, {Json? body, bool get = false}) async => {
-        'month': '2026-11',
-        'reservedAttempts': 2,
-        'limit': 50,
-        'remainingAttempts': 48,
-        'accounts': [
-          {'accountId': 'a', 'nextEligibleRefreshAt': '2026-11-07T00:00:00Z'}
-        ]
-      };
+  Future<Json> api(String path, {Json? body, bool get = false}) async =>
+      path == 'connections/pending'
+          ? {'sessions': <Json>[]}
+          : {
+              'month': '2026-11',
+              'reservedAttempts': 2,
+              'limit': 50,
+              'remainingAttempts': 48,
+              'accounts': [
+                {
+                  'accountId': 'a',
+                  'nextEligibleRefreshAt': '2026-11-07T00:00:00Z'
+                }
+              ]
+            };
   @override
   Future<List<Json>> rows(String table) async {
     if (fail) throw Exception('must never display this financial content');

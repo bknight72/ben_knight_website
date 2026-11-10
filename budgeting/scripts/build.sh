@@ -19,4 +19,7 @@ trap 'docker rm "$container" >/dev/null' EXIT INT TERM
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/workspace" -w /workspace denoland/deno:latest deno eval 'await Deno.remove("build/web", {recursive:true}).catch(e => {if (!(e instanceof Deno.errors.NotFound)) throw e;}); await Deno.mkdir("build/web", {recursive:true});'
 mkdir -p build/web
 docker cp "$container:/workspace/build/web/." build/web/
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/workspace" -w /workspace \
+  -e SUPABASE_URL -e SUPABASE_PUBLISHABLE_KEY -e STRIPE_ENABLED -e STRIPE_PUBLISHABLE_KEY \
+  denoland/deno:latest run --allow-env --allow-read --allow-write scripts/release.ts config build/web
 sh scripts/package-vercel.sh

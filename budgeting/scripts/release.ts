@@ -14,8 +14,63 @@ export function preflight(env: Settings) {
   assert.ok(
     !/placeholder|your[_-]|example/i.test(env.SUPABASE_PUBLISHABLE_KEY!),
   );
-  assert.equal(env.STRIPE_ENABLED, "false");
-  assert.equal(env.STRIPE_PUBLISHABLE_KEY ?? "", "");
+  const enabled = env.STRIPE_ENABLED ?? "false";
+  const key = env.STRIPE_PUBLISHABLE_KEY ?? "";
+  if (
+    !["true", "false"].includes(enabled) ||
+    (enabled === "true"
+      ? !/^pk_live_[A-Za-z0-9]{20,}$/.test(key) ||
+        /placeholder|your|example|replace/i.test(key)
+      : key !== "")
+  ) {
+    throw new Error(
+      "Invalid public Stripe release configuration; values withheld.",
+    );
+  }
+}
+
+export function publicConfig(env: Settings) {
+  preflight(env);
+  return {
+    supabaseUrl: env.SUPABASE_URL!,
+    supabasePublishableKey: env.SUPABASE_PUBLISHABLE_KEY!,
+    stripeEnabled: env.STRIPE_ENABLED === "true",
+    stripePublishableKey: env.STRIPE_PUBLISHABLE_KEY ?? "",
+  };
+}
+
+export function checkPublicConfig(record: unknown, env: Settings) {
+  // Do not use assertion diffs: a misconfigured input may be a private key.
+  if (JSON.stringify(record) !== JSON.stringify(publicConfig(env))) {
+    throw new Error("Release public configuration mismatch; values withheld.");
+  }
+}
+
+export function checkPublicJs(body: string, env: Settings) {
+  preflight(env);
+  if (
+    !body.includes(env.SUPABASE_URL!) ||
+    !body.includes(env.SUPABASE_PUBLISHABLE_KEY!) ||
+    (env.STRIPE_ENABLED === "true"
+      ? !body.includes(env.STRIPE_PUBLISHABLE_KEY!)
+      : /pk_(?:live|test)_/.test(body))
+  ) {
+    throw new Error("Artifact public configuration mismatch; values withheld.");
+  }
+}
+
+export async function writePublicConfig(root: string, env: Settings) {
+  const config = publicConfig(env);
+  checkPublicJs(await Deno.readTextFile(`${root}/main.dart.js`), env);
+  assert.match(
+    await Deno.readTextFile(`${root}/assets/config.yaml`),
+    /^stripe_enabled: true\s*$/m,
+    "Bundled Stripe capability gate must permit explicit build opt-in",
+  );
+  await Deno.writeTextFile(
+    `${root}/release-config.json`,
+    JSON.stringify(config, null, 2),
+  );
 }
 
 export function allowedOrigin(
@@ -66,8 +121,26 @@ async function inventory(
   );
 }
 
-export async function manifest(root: string, sha: string, versions: string) {
+export async function manifest(
+  root: string,
+  sha: string,
+  versions: string,
+  env: Settings,
+) {
   assert.match(sha, /^[a-f0-9]{40}$/);
+  const releaseConfig = publicConfig(env);
+  checkPublicConfig(
+    JSON.parse(
+      await Deno.readTextFile(
+        `${root}/.vercel/output/static/release-config.json`,
+      ),
+    ),
+    env,
+  );
+  checkPublicJs(
+    await Deno.readTextFile(`${root}/.vercel/output/static/main.dart.js`),
+    env,
+  );
   const files = await inventory(`${root}/.vercel/output`);
   for (
     const name of ["config.json", "static/index.html", "static/main.dart.js"]
@@ -93,6 +166,7 @@ export async function manifest(root: string, sha: string, versions: string) {
         attempt: Deno.env.get("GITHUB_RUN_ATTEMPT") ?? "local",
         builtAt: new Date().toISOString(),
         versions,
+        publicConfig: releaseConfig,
         files,
       },
       null,
@@ -101,7 +175,7 @@ export async function manifest(root: string, sha: string, versions: string) {
   );
 }
 
-export async function verify(root: string, sha: string) {
+export async function verify(root: string, sha: string, env: Settings) {
   assert.match(sha, /^[a-f0-9]{40}$/);
   for (
     const [path, names] of [[root, [".vercel", "manifest.json"]], [
@@ -122,6 +196,15 @@ export async function verify(root: string, sha: string) {
   }
   const record = JSON.parse(await Deno.readTextFile(`${root}/manifest.json`));
   assert.equal(record.source, sha, "Release source mismatch");
+  checkPublicConfig(record.publicConfig, env);
+  checkPublicConfig(
+    JSON.parse(
+      await Deno.readTextFile(
+        `${root}/.vercel/output/static/release-config.json`,
+      ),
+    ),
+    env,
+  );
   assert.deepEqual(
     await inventory(`${root}/.vercel/output`),
     record.files,
@@ -198,7 +281,14 @@ export async function smoke(value: string, env: Settings) {
     : "";
   const expected =
     JSON.parse(await Deno.readTextFile("vercel.json")).headers[0].headers;
-  for (const path of ["/", "/launch-check", "/main.dart.js"]) {
+  for (
+    const path of [
+      "/",
+      "/launch-check",
+      "/release-config.json",
+      "/main.dart.js",
+    ]
+  ) {
     console.log(`Checking frontend ${path}`);
     const response = await request(
       new URL(path, url).href,
@@ -213,9 +303,13 @@ export async function smoke(value: string, env: Settings) {
       }
     }
     if (
-      !(path.endsWith(".js") ? /javascript/ : /text\/html/).test(
-        response.headers.get("content-type") ?? "",
-      )
+      !(path.endsWith(".js")
+        ? /javascript/
+        : path.endsWith(".json")
+        ? /application\/json/
+        : /text\/html/).test(
+          response.headers.get("content-type") ?? "",
+        )
     ) {
       throw new ReleaseSmokeError(
         `Frontend ${path}: unexpected content type. Check static-file precedence and SPA fallback.`,
@@ -226,12 +320,20 @@ export async function smoke(value: string, env: Settings) {
       throw new ReleaseSmokeError(`Frontend ${path}: empty response body.`);
     }
     if (path.endsWith(".js")) {
-      if (
-        !body.includes(env.SUPABASE_URL!) ||
-        !body.includes(env.SUPABASE_PUBLISHABLE_KEY!)
-      ) {
+      try {
+        checkPublicJs(body, env);
+      } catch {
         throw new ReleaseSmokeError(
           "Frontend /main.dart.js: deployed public configuration does not match this release. Check the deployed artifact and build variables.",
+        );
+      }
+    }
+    if (path.endsWith(".json")) {
+      try {
+        checkPublicConfig(JSON.parse(body), env);
+      } catch {
+        throw new ReleaseSmokeError(
+          "Frontend public release evidence does not match intended configuration; values withheld.",
         );
       }
     }
@@ -241,6 +343,8 @@ export async function smoke(value: string, env: Settings) {
       );
       const name = path.endsWith(".js")
         ? "static/main.dart.js"
+        : path.endsWith(".json")
+        ? "static/release-config.json"
         : "static/index.html";
       const digest = await crypto.subtle.digest(
         "SHA-256",
@@ -432,10 +536,14 @@ if (import.meta.main) {
           Deno.args[1],
           env.SOURCE_SHA ?? "",
           env.TOOL_VERSIONS ?? "",
+          env,
         );
         break;
       case "verify":
-        await verify(Deno.args[1], Deno.args[2]);
+        await verify(Deno.args[1], Deno.args[2], env);
+        break;
+      case "config":
+        await writePublicConfig(Deno.args[1], env);
         break;
       case "target":
         await target(env);

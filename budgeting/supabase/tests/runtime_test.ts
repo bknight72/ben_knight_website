@@ -152,7 +152,11 @@ Deno.test("disconnect unsubscribes before revoking and persists local state only
     state: async (op: string) => {
       order.push(op);
       return op === "mapping"
-        ? { provider_id: "fca_synthetic", livemode: false }
+        ? {
+          provider_id: "fca_synthetic",
+          livemode: false,
+          customer_id: "cus_synthetic",
+        }
         : {};
     },
     call: async () => [{ connection_state: "active" }],
@@ -161,7 +165,16 @@ Deno.test("disconnect unsubscribes before revoking and persists local state only
     live: false,
     call: async (path: string) => {
       order.push(path.split("/").pop()!);
-      return { status: "active", subscriptions: ["transactions"] };
+      return {
+        livemode: false,
+        account_holder: { customer: "cus_synthetic" },
+        status: order.filter((v) => v === "fca_synthetic").length > 1
+          ? "disconnected"
+          : "active",
+        subscriptions: order.filter((v) => v === "fca_synthetic").length > 1
+          ? []
+          : ["transactions"],
+      };
     },
   } as unknown as Stripe;
   await processJob(
@@ -175,11 +188,12 @@ Deno.test("disconnect unsubscribes before revoking and persists local state only
     stripe,
     Date.now() + 5000,
   );
-  equal(order, [
+  equal(order.filter((op) => op !== "job_renew"), [
     "mapping",
     "fca_synthetic",
     "unsubscribe",
     "disconnect",
+    "fca_synthetic",
     "disconnected",
     "finish",
   ]);
@@ -239,12 +253,20 @@ Deno.test("balance worker respects first-attempt provider cooldown and stores ne
     state: async (op: string, payload: any) => {
       writes.push({ op, payload });
       return op === "mapping"
-        ? { provider_id: "fca_test", livemode: false }
+        ? {
+          provider_id: "fca_test",
+          livemode: false,
+          customer_id: "cus_synthetic",
+        }
         : {};
     },
     call: async () => [{ connection_state: "active" }],
   } as unknown as Database;
   const provider = {
+    livemode: false,
+    status: "active",
+    account_holder: { customer: "cus_synthetic" },
+    permissions: ["balances", "transactions"],
     balance_refresh: {
       status: "succeeded",
       next_refresh_available_at: Math.floor(Date.now() / 1000) + 3600,
@@ -257,6 +279,7 @@ Deno.test("balance worker respects first-attempt provider cooldown and stores ne
   };
   const stripe = {
     live: false,
+    requireActivity: () => {},
     call: async (path: string) => {
       calls.push(path);
       return provider;
