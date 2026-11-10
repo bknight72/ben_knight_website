@@ -303,9 +303,14 @@ export async function supabaseTarget(env: Settings) {
       "SUPABASE_PROJECT_REF must be a 20-letter project ref matching SUPABASE_URL exactly (without trailing slash). Check budgeting-production variables.",
     );
   }
-  if (!/^\S+$/.test(env.SUPABASE_ACCESS_TOKEN ?? "")) {
+  if (!env.SUPABASE_ACCESS_TOKEN) {
     throw new ReleaseTargetError(
-      "SUPABASE_ACCESS_TOKEN is missing or malformed. Set the budgeting-production environment secret to a Supabase account access token.",
+      "SUPABASE_ACCESS_TOKEN is empty or unavailable to this job. Add it under Secrets (not Variables) in this repository's budgeting-production GitHub environment, then start a new workflow run.",
+    );
+  }
+  if (/\s/.test(env.SUPABASE_ACCESS_TOKEN)) {
+    throw new ReleaseTargetError(
+      "SUPABASE_ACCESS_TOKEN contains whitespace or a line break. Replace the GitHub environment secret with only the raw account access token, on one line, without a Bearer prefix or an environment-file assignment.",
     );
   }
   let response: Response;

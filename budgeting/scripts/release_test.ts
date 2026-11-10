@@ -109,8 +109,25 @@ Deno.test("Supabase preflight binds URL to active authenticated project without 
     );
     await assert.rejects(
       () => supabaseTarget({ ...settings, SUPABASE_ACCESS_TOKEN: "" }),
-      /missing or malformed/,
+      /empty or unavailable/,
     );
+    for (
+      const token of [
+        " synthetic-credential",
+        "synthetic-credential\n",
+        "Bearer synthetic-credential",
+        "synthetic credential value",
+      ]
+    ) {
+      await assert.rejects(
+        () => supabaseTarget({ ...settings, SUPABASE_ACCESS_TOKEN: token }),
+        (error: Error) => {
+          assert.match(error.message, /contains whitespace or a line break/);
+          assert.ok(!error.message.includes(token));
+          return true;
+        },
+      );
+    }
     for (
       const project of [{ id: "wrong", status: "ACTIVE_HEALTHY" }, {
         id: settings.SUPABASE_PROJECT_REF,
