@@ -358,6 +358,8 @@ Configure the following through GitHub settings, never tracked files or chat:
 | Repository variable | `BUDGETING_DEPLOY_ENABLED` | Unset initially; exact `true` enables release jobs |
 | Repository variable | `SUPABASE_URL` | Verified production-shaped hosted project origin from section 7 |
 | Repository variable | `SUPABASE_PUBLISHABLE_KEY` | Matching browser-safe publishable key |
+| `budgeting-production` environment variable | `SUPABASE_PROJECT_REF` | Exact hosted project ref matching repository `SUPABASE_URL` without trailing slash |
+| Same environment secret | `SUPABASE_ACCESS_TOKEN` | Supabase account token with project-read and function-deploy access, not the publishable/service-role key |
 | `budgeting-production` environment variable | `VERCEL_ORG_ID` | Verified account/team identifier |
 | Same environment variable | `VERCEL_PROJECT_ID` | Existing dedicated budgeting project ID |
 | Same environment variable | `VERCEL_PROJECT_NAME` | Exact existing project name, lowercase letters/digits/hyphens/underscores; not the hostname |
@@ -395,6 +397,36 @@ validation. GitHub concurrency is not FIFO and can supersede pending jobs; do no
 manually cancel an in-flight production publish as a routine release strategy.
 
 ### Evidence And Verification
+
+The serialized production job now deploys backend functions before frontend
+publication. After artifact verification, credential-free container installation
+records the Supabase CLI version/image. Vercel target identity is checked first;
+Supabase preflight then verifies the ref matches `SUPABASE_URL`, account-token
+access, returned project identity, and `ACTIVE_HEALTHY` status. Scope account
+tokens to this project/access where supported: project metadata read and Edge
+Function write access are required; additional function/branch read permissions
+may be required by the current CLI. Never enter token values in chat or logs.
+
+The job deploys `api`, `stripe-webhook`, and `worker` sequentially from the trusted
+release SHA using `--remote=<ref> --use-api --yes`. Only source/config is copied
+into its non-root temporary container workspace; no Docker socket or `.env` file
+is mounted. The account token is available only in the backend preflight/deploy
+step. A separate token-free anonymous backend health check gates Vercel publishing.
+Existing postpublication health/frontend checks remain. No migrations, ledger
+repair, owner creation, Auth/secret changes, Stripe enablement, webhook setup, or
+worker schedule is automated. Previously SQL-Editor-applied migrations must be
+reconciled before any separately reviewed future automated database workflow.
+
+Deployments across functions/frontend are not transactional. A failed function
+deploy or readiness check stops frontend publishing, but some functions may be
+updated already. Successful function steps and partial-release warnings appear in
+the job summary. A stale revision may deploy its backend then be blocked before
+frontend publication if master advances. Maintain old-frontend compatibility,
+inspect both platforms before retrying, and dispatch current master after review.
+Do not automatically roll back functions or database. With explicit authorization,
+redeploy reviewed known-good function source for recovery; rotating an account
+token is a separate platform operation. First remote execution of this new
+automation remains an acceptance step, not a result established by this runbook.
 
 The immutable `budgeting-release-<run-id>-<attempt>` artifact contains only
 `.vercel/output` and a non-served `manifest.json`. Hidden output is explicitly

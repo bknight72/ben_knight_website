@@ -124,7 +124,7 @@ jobs:
       github.ref == 'refs/heads/master' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
       actions: read
@@ -145,6 +145,7 @@ jobs:
       VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
       VERCEL_PROJECT_NAME: ${{ vars.VERCEL_PROJECT_NAME }}
       BUDGETING_PRODUCTION_URL: ${{ vars.BUDGETING_PRODUCTION_URL }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
     steps:
       - name: Recheck current master after deployment queue
         env:
@@ -194,6 +195,63 @@ jobs:
           DOCKERFILE
           docker run --rm budgeting-vercel:latest --version
           docker image inspect budgeting-vercel:latest --format '{{.Id}} {{json .RepoDigests}}'
+      - name: Prepare containerized Supabase tooling without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull -t budgeting-supabase-deploy:latest - <<'DOCKERFILE'
+          FROM node:latest
+          LABEL org.opencontainers.image.vendor="Novacoast-VCA-805"
+          RUN npm install --prefix /opt/supabase --no-package-lock supabase
+          ENV PATH="/opt/supabase/node_modules/.bin:${PATH}"
+          USER node
+          WORKDIR /workspace
+          ENTRYPOINT ["supabase"]
+          DOCKERFILE
+          docker run --rm budgeting-supabase-deploy:latest --version
+          docker image inspect budgeting-supabase-deploy:latest --format '{{.Id}} {{json .RepoDigests}}'
+      - name: Verify Vercel target before backend changes
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/workspace:ro" -w /workspace \
+            -e VERCEL_ORG_ID -e VERCEL_PROJECT_ID -e VERCEL_PROJECT_NAME -e VERCEL_TOKEN \
+            denoland/deno:latest run --allow-env --allow-read --allow-net \
+            budgeting/scripts/release.ts target
+      - name: Validate Supabase target and deploy backend functions
+        id: backend
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          current=$(curl --fail --silent --show-error --max-time 30 \
+            -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/ref/heads/master" | jq -er '.object.sha')
+          test "$current" = "$SOURCE_SHA" || { printf '%s\n' 'Master advanced before backend deployment; dispatch current master.' >&2; exit 1; }
+          docker run --rm -v "$GITHUB_WORKSPACE/budgeting:/workspace:ro" -w /workspace \
+            -e SUPABASE_PROJECT_REF -e SUPABASE_URL -e SUPABASE_ACCESS_TOKEN \
+            denoland/deno:latest run --allow-env --allow-net scripts/release.ts supabase-target
+          for function in api stripe-webhook worker; do
+            printf 'attempted=true\n' >> "$GITHUB_OUTPUT"
+            docker run --rm -v "$GITHUB_WORKSPACE/budgeting/supabase:/source:ro" \
+              --tmpfs /workspace:rw,mode=1777 -w /workspace \
+              -e SUPABASE_ACCESS_TOKEN -e HOME=/tmp \
+              --entrypoint sh budgeting-supabase-deploy:latest -ec '
+                mkdir supabase
+                cp /source/config.toml supabase/config.toml
+                cp -R /source/functions supabase/functions
+                exec supabase functions deploy "$1" --remote="$2" --use-api --yes
+              ' sh "$function" "$SUPABASE_PROJECT_REF"
+            printf 'Backend function %s deployed from revision %s.\n' "$function" "$SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
+          done
+      - name: Verify backend health before frontend publication
+        id: backend-health
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE/budgeting:/workspace:ro" -w /workspace \
+            -e SUPABASE_URL -e SUPABASE_PUBLISHABLE_KEY -e STRIPE_ENABLED -e STRIPE_PUBLISHABLE_KEY \
+            denoland/deno:latest run --allow-env --allow-net scripts/release.ts backend-health
       - name: Validate target and publish prebuilt output
         id: publish
         env:
@@ -266,3 +324,7 @@ jobs:
           # shellcheck disable=SC2016 # Markdown backticks are literal formatting.
           printf '### Budgeting production release\n\nRevision: `%s`\n\nArtifact ID: `%s`\n\nSHA-256: `%s`\n\nDeployment ID: `%s`\n\nDeployment: %s\n\nProduction: %s\n\nChecksum/revision, authenticated target, routes, headers, assets, backend health, and configured browser checks passed.\n' \
             "$SOURCE_SHA" "$ARTIFACT_ID" "$ARTIFACT_DIGEST" "$DEPLOYMENT_ID" "$DEPLOYMENT_URL" "$BUDGETING_PRODUCTION_URL" >> "$GITHUB_STEP_SUMMARY"
+      - name: Record partial release warning
+        if: ${{ always() && steps.backend.outputs.attempted == 'true' && job.status != 'success' }}
+        run: |
+          printf '\n### Partial release requires inspection\n\nBackend deployment was attempted; one or more functions may already be live even if later checks or frontend publishing failed. Inspect Supabase and Vercel state before retrying. No automatic database/function rollback was performed.\n' >> "$GITHUB_STEP_SUMMARY"

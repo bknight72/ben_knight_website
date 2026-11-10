@@ -284,6 +284,8 @@ Release jobs are disabled unless repository variable `BUDGETING_DEPLOY_ENABLED` 
 | Repository variable | `BUDGETING_DEPLOY_ENABLED` | Unset/anything other than exact `true` means validation only |
 | Repository variable | `SUPABASE_URL` | Verified hosted origin satisfying release preflight |
 | Repository variable | `SUPABASE_PUBLISHABLE_KEY` | Matching browser-safe `sb_publishable_...` key |
+| `budgeting-production` environment variable | `SUPABASE_PROJECT_REF` | Production project ref; `SUPABASE_URL` must equal `https://<ref>.supabase.co` exactly |
+| Same environment secret | `SUPABASE_ACCESS_TOKEN` | Supabase account token authorized to read project metadata and deploy functions; not a project API key |
 | `budgeting-production` environment variable | `VERCEL_ORG_ID` | Verified dedicated account/team ID |
 | Same environment variable | `VERCEL_PROJECT_ID` | Verified dedicated budgeting project ID |
 | Same environment variable | `VERCEL_PROJECT_NAME` | Exact existing project name, lowercase letters/digits/hyphens/underscores; not the hostname |
@@ -298,6 +300,36 @@ After explicit activation authorization, every `master` push/merge is eligible, 
 `release-build` requires successful validation, both independent 70% coverage gates, and real disposable Supabase/browser integration. It runs `build.sh` with public values and Stripe disabled, then the configured local browser smoke. It stages only `release/.vercel/output` and `manifest.json`, outside the served static tree. The manifest records source SHA, run/attempt, build time, resolved tool versions/image evidence, and per-file SHA-256 checksums. The immutable `budgeting-release-<run>-<attempt>` artifact includes hidden output, fails if missing, and is retained 30 days. Artifact access follows repository permissions; all contents must be browser-safe, even in a private repository. Do not upload source, `.env`, backend secrets, `build/local-browser`, or the unconfigured validation artifact as a release.
 
 `deploy` depends on validation and that build, uses a fresh trusted-SHA checkout, downloads the exact same-run artifact ID, and verifies its source/checksums with read-only tooling. It does not execute artifact-provided scripts or rebuild. `release.ts target` authenticates and verifies existing Vercel project/account/name before containerized `vercel deploy --prebuilt --prod`; it must not create/relink a project. The Vercel token is available only to that publish step, not dependency installation, release build, or smoke tests. Tool dependencies are installed only in containers. Actions use full commit SHAs; default token access is read-only, with `actions: read` added only for deployment artifact access and checkout credentials not persisted.
+
+The same serialized job now deploys the Supabase backend before Vercel publishing.
+The Vercel token is also scoped to the separate pre-backend target-verification
+step; it is never passed to Supabase deployment or backend health.
+It installs the CLI in a credential-free, non-root-runtime Node container, records
+the resolved version/image, and verifies both targets before mutation. Supabase
+preflight requires a matching project ref/URL and authenticated `ACTIVE_HEALTHY`
+project. The account token is exposed only to that preflight/deploy step, never to
+installation, builds, health checks, or artifacts. Use scoped access with
+`projects_read` and `edge_functions_write`, plus any read/branch permissions the
+current CLI requires; do not use a service-role key as the account token.
+
+Functions `api`, `stripe-webhook`, then `worker` deploy sequentially from the same
+trusted SHA using `--remote=<ref> --use-api --yes` and the checked-in config. The
+container copies only function source/config into a temporary writable workspace;
+it mounts neither the Docker socket nor backend `.env` files. Anonymous backend
+health must pass before frontend publication. Current-master checks apply before
+backend mutation and again before frontend publishing. No migrations, migration
+history repair, user provisioning, secrets upload, Stripe activation, or worker
+schedule is performed. Existing hosted secrets and completed manual schema/Auth
+setup remain prerequisites. Reconcile manually applied migration history before
+any separately approved future `db push`.
+
+Backend deployment is not atomic across functions or with Vercel. If deployment,
+health, or a later frontend step fails, some new backend code may already be live.
+The job summary records successful functions and warns on partial releases.
+Inspect both platforms before retrying; keep backend changes compatible with the
+previous frontend/schema. No automatic rollback runs. Explicitly authorized
+recovery may redeploy reviewed known-good function source without reverting data.
+Rotate the Supabase account token independently through platform settings.
 
 The workflow captures the unique project deployment URL/ID, then checks that URL and the exact production URL for HTTPS root, extensionless reload, JS content type/configuration, expected security/no-store headers, healthy backend JSON including database connectivity, and configured browser startup. HTTP checks retry with bounds; smoke checks do not log in or perform financial writes. The optional protection-bypass secret is supplied only to smoke steps, scoped to the unique Vercel origin, never to the backend or canonical production origin. Do not disable Deployment Protection to pass CI. Summaries retain revision, artifact ID/digest, deployment links/ID, and check results. These checks do not replace section 10 of the runbook: owner/MFA denial, SMTP recovery, synthetic financial flows, and backup readiness remain separate launch gates. No new test or hosted acceptance result is asserted here.
 

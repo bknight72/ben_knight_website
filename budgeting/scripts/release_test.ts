@@ -1,9 +1,11 @@
 import { strict as assert } from "node:assert";
 import {
   allowedOrigin,
+  backendHealth,
   manifest,
   preflight,
   smoke,
+  supabaseTarget,
   target,
   verify,
 } from "./release.ts";
@@ -43,8 +45,131 @@ Deno.test("workflow allows only master pushes and manual release events with gat
   );
   assert.match(workflow, /retention-days: 30/);
   assert.match(workflow, /Hosted bytes|RELEASE_ROOT=/);
+  const backend = workflow.indexOf(
+    "name: Validate Supabase target and deploy backend functions",
+  );
+  const health = workflow.indexOf(
+    "name: Verify backend health before frontend publication",
+  );
+  const publish = workflow.indexOf(
+    "name: Validate target and publish prebuilt output",
+  );
+  assert.ok(
+    backend >
+        workflow.indexOf("name: Verify Vercel target before backend changes") &&
+      health > backend && publish > health,
+  );
+  assert.match(workflow, /for function in api stripe-webhook worker; do/);
+  assert.match(workflow, /--remote="\$2" --use-api --yes/);
+  assert.doesNotMatch(
+    workflow,
+    /supabase (?:db push|migration|secrets set)|docker\.sock|--debug/,
+  );
+  assert.equal(
+    (workflow.match(/secrets\.SUPABASE_ACCESS_TOKEN/g) ?? []).length,
+    1,
+  );
+  assert.ok(workflow.indexOf("secrets.SUPABASE_ACCESS_TOKEN") > backend);
+  assert.ok(workflow.indexOf("secrets.SUPABASE_ACCESS_TOKEN") < health);
   for (const action of workflow.matchAll(/uses: (.+)/g)) {
     assert.match(action[1], /@[a-f0-9]{40}(?:\s|$)/);
+  }
+});
+Deno.test("Supabase preflight binds URL to active authenticated project without leaking secrets", async () => {
+  const original = globalThis.fetch;
+  const settings = {
+    ...env,
+    SUPABASE_PROJECT_REF: "abcdefghijklmnopqrst",
+    SUPABASE_ACCESS_TOKEN: "synthetic-account-token",
+  };
+  try {
+    globalThis.fetch = async (input, init) => {
+      assert.equal(
+        String(input),
+        `https://api.supabase.com/v1/projects/${settings.SUPABASE_PROJECT_REF}`,
+      );
+      assert.equal(
+        new Headers(init?.headers).get("Authorization"),
+        `Bearer ${settings.SUPABASE_ACCESS_TOKEN}`,
+      );
+      assert.equal(init?.redirect, "error");
+      return Response.json({
+        id: settings.SUPABASE_PROJECT_REF,
+        status: "ACTIVE_HEALTHY",
+      });
+    };
+    await supabaseTarget(settings);
+    await assert.rejects(
+      () =>
+        supabaseTarget({
+          ...settings,
+          SUPABASE_URL: "https://wrong.supabase.co",
+        }),
+      /matching SUPABASE_URL/,
+    );
+    await assert.rejects(
+      () => supabaseTarget({ ...settings, SUPABASE_ACCESS_TOKEN: "" }),
+      /missing or malformed/,
+    );
+    for (
+      const project of [{ id: "wrong", status: "ACTIVE_HEALTHY" }, {
+        id: settings.SUPABASE_PROJECT_REF,
+        status: "INACTIVE",
+      }]
+    ) {
+      globalThis.fetch = async () => Response.json(project);
+      await assert.rejects(
+        () => supabaseTarget(settings),
+        /identity|ACTIVE_HEALTHY/,
+      );
+    }
+    for (const status of [401, 403, 404, 500]) {
+      globalThis.fetch = async () =>
+        new Response(settings.SUPABASE_ACCESS_TOKEN, { status });
+      await assert.rejects(() => supabaseTarget(settings), (error: Error) => {
+        assert.match(error.message, new RegExp(`HTTP ${status}`));
+        assert.ok(!error.message.includes(settings.SUPABASE_ACCESS_TOKEN));
+        return true;
+      });
+    }
+    globalThis.fetch = async () => {
+      throw new Error(settings.SUPABASE_ACCESS_TOKEN);
+    };
+    await assert.rejects(
+      () => supabaseTarget(settings),
+      /Cannot reach the Supabase Management API/,
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+Deno.test("standalone backend gate is anonymous and requires connected JSON readiness", async () => {
+  const original = globalThis.fetch;
+  try {
+    globalThis.fetch = async (input, init) => {
+      assert.equal(
+        String(input),
+        `${env.SUPABASE_URL}/functions/v1/api/health`,
+      );
+      assert.equal(new Headers(init?.headers).get("Authorization"), null);
+      assert.equal(
+        new Headers(init?.headers).get("x-vercel-protection-bypass"),
+        null,
+      );
+      return Response.json({ status: "ok", database: "connected" });
+    };
+    await backendHealth({
+      ...env,
+      SUPABASE_ACCESS_TOKEN: "must-not-send",
+      VERCEL_AUTOMATION_BYPASS_SECRET: "must-not-send",
+    });
+    globalThis.fetch = async () =>
+      Response.json({ status: "ok", database: "disconnected" });
+    await assert.rejects(() => backendHealth(env), /database connected/);
+    globalThis.fetch = async () => new Response("not-json");
+    await assert.rejects(() => backendHealth(env), /valid JSON/);
+  } finally {
+    globalThis.fetch = original;
   }
 });
 Deno.test("release preflight accepts only configured CSV release values", () => {

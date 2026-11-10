@@ -257,6 +257,20 @@ export async function smoke(value: string, env: Settings) {
       }
     }
   }
+  await backendHealth(env);
+  console.log(
+    "HTTPS, routing, security headers, configured assets, and backend health passed.",
+  );
+}
+
+export async function backendHealth(env: Settings) {
+  try {
+    preflight(env);
+  } catch {
+    throw new ReleaseSmokeError(
+      "Public backend configuration is missing or invalid.",
+    );
+  }
   console.log("Checking anonymous backend health");
   const health = await request(
     `${env.SUPABASE_URL}/functions/v1/api/health`,
@@ -274,12 +288,63 @@ export async function smoke(value: string, env: Settings) {
       "Backend /health is not reporting status ok and database connected. Check the Supabase API function and database readiness.",
     );
   }
-  console.log(
-    "HTTPS, routing, security headers, configured assets, and backend health passed.",
-  );
+  console.log("Anonymous backend health passed.");
 }
 
 class ReleaseTargetError extends Error {}
+
+export async function supabaseTarget(env: Settings) {
+  const ref = env.SUPABASE_PROJECT_REF ?? "";
+  if (
+    !/^[a-z]{20}$/.test(ref) ||
+    env.SUPABASE_URL !== `https://${ref}.supabase.co`
+  ) {
+    throw new ReleaseTargetError(
+      "SUPABASE_PROJECT_REF must be a 20-letter project ref matching SUPABASE_URL exactly (without trailing slash). Check budgeting-production variables.",
+    );
+  }
+  if (!/^\S+$/.test(env.SUPABASE_ACCESS_TOKEN ?? "")) {
+    throw new ReleaseTargetError(
+      "SUPABASE_ACCESS_TOKEN is missing or malformed. Set the budgeting-production environment secret to a Supabase account access token.",
+    );
+  }
+  let response: Response;
+  try {
+    response = await fetch(`https://api.supabase.com/v1/projects/${ref}`, {
+      headers: { Authorization: `Bearer ${env.SUPABASE_ACCESS_TOKEN}` },
+      redirect: "error",
+      signal: AbortSignal.timeout(20000),
+    });
+  } catch {
+    throw new ReleaseTargetError(
+      "Cannot reach the Supabase Management API. Check network/TLS connectivity.",
+    );
+  }
+  if (response.status !== 200) {
+    throw new ReleaseTargetError(
+      `Supabase project lookup returned HTTP ${response.status}. Check project ref, account token permissions, and Supabase availability.`,
+    );
+  }
+  let project;
+  try {
+    project = await response.json();
+  } catch {
+    throw new ReleaseTargetError(
+      "Supabase project lookup returned invalid JSON.",
+    );
+  }
+  if ((project?.ref ?? project?.id) !== ref) {
+    throw new ReleaseTargetError(
+      "Supabase project lookup returned an unexpected project identity.",
+    );
+  }
+  if (project?.status !== "ACTIVE_HEALTHY") {
+    throw new ReleaseTargetError(
+      "Supabase project is not ACTIVE_HEALTHY. Verify it is not paused, restoring, or unhealthy before deploying.",
+    );
+  }
+  console.log("Verified active Supabase backend project identity.");
+}
 
 export async function target(env: Settings) {
   for (
@@ -369,6 +434,12 @@ if (import.meta.main) {
         break;
       case "target":
         await target(env);
+        break;
+      case "supabase-target":
+        await supabaseTarget(env);
+        break;
+      case "backend-health":
+        await backendHealth(env);
         break;
       case "smoke":
         await smoke(Deno.args[1], env);
