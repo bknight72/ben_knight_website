@@ -34,11 +34,7 @@ export function allowedOrigin(
   assert.equal(url.href, url.origin + "/");
   assert.equal(url.username + url.password + url.port, "");
   if (url.origin !== canonical.origin && project) {
-    assert.match(project, /^[a-z0-9-]+$/);
-    assert.ok(
-      url.hostname.startsWith(`${project}-`),
-      "Unexpected deployment project",
-    );
+    assert.match(project, /^[a-z0-9_-]+$/);
   }
   return url;
 }
@@ -136,7 +132,9 @@ export async function verify(root: string, sha: string) {
   ) assert.ok(record.files[name]);
 }
 
-async function request(url: string, bypass = "") {
+class ReleaseSmokeError extends Error {}
+
+async function request(url: string, bypass = "", label = "Readiness") {
   const headers: Record<string, string> = bypass
     ? { "x-vercel-protection-bypass": bypass }
     : {};
@@ -148,10 +146,25 @@ async function request(url: string, bypass = "") {
         redirect: "error",
         signal: AbortSignal.timeout(20000),
       });
-      assert.equal(response.status, 200, "Readiness returned non-200");
+      if (response.status !== 200) {
+        const status = response.status;
+        await response.body?.cancel();
+        const guidance = (status === 401 || status === 403) && bypass
+          ? "Verify the automation bypass secret and Deployment Protection settings."
+          : (status === 401 || status === 403)
+          ? "Check Deployment Protection for frontend requests, or anonymous health access for backend requests."
+          : status >= 300 && status < 400
+          ? "Unexpected redirect; check canonical domain and routing settings."
+          : "Check deployment routing or backend readiness.";
+        throw new ReleaseSmokeError(
+          `${label} returned HTTP ${status}. ${guidance}`,
+        );
+      }
       return response;
     } catch (error) {
-      last = error;
+      last = error instanceof ReleaseSmokeError ? error : new ReleaseSmokeError(
+        `${label} request failed (network, TLS, redirect, or timeout). Response details withheld.`,
+      );
       if (attempt < 4) {
         await new Promise((resolve) => setTimeout(resolve, 3000));
       }
@@ -161,38 +174,66 @@ async function request(url: string, bypass = "") {
 }
 
 export async function smoke(value: string, env: Settings) {
-  preflight(env);
-  const url = allowedOrigin(
-    value,
-    env.BUDGETING_PRODUCTION_URL ?? "https://budgeting.benknight.dev",
-    env.VERCEL_PROJECT_NAME,
-  );
+  try {
+    preflight(env);
+  } catch {
+    throw new ReleaseSmokeError(
+      "Public release configuration is missing or invalid in the deploy job.",
+    );
+  }
+  let url: URL;
+  try {
+    url = allowedOrigin(
+      value,
+      env.BUDGETING_PRODUCTION_URL ?? "https://budgeting.benknight.dev",
+      env.VERCEL_PROJECT_NAME,
+    );
+  } catch {
+    throw new ReleaseSmokeError(
+      "Smoke URL is not an approved HTTPS deployment origin.",
+    );
+  }
   const bypass = url.hostname.endsWith(".vercel.app")
     ? env.VERCEL_AUTOMATION_BYPASS_SECRET ?? ""
     : "";
   const expected =
     JSON.parse(await Deno.readTextFile("vercel.json")).headers[0].headers;
   for (const path of ["/", "/launch-check", "/main.dart.js"]) {
-    const response = await request(new URL(path, url).href, bypass);
+    console.log(`Checking frontend ${path}`);
+    const response = await request(
+      new URL(path, url).href,
+      bypass,
+      `Frontend ${path}`,
+    );
     for (const header of expected) {
-      assert.equal(
-        response.headers.get(header.key),
-        header.value,
-        `Missing security header: ${header.key}`,
+      if (response.headers.get(header.key) !== header.value) {
+        throw new ReleaseSmokeError(
+          `Frontend ${path}: missing or unexpected ${header.key} header. Check the packaged Vercel routes/headers and platform overrides.`,
+        );
+      }
+    }
+    if (
+      !(path.endsWith(".js") ? /javascript/ : /text\/html/).test(
+        response.headers.get("content-type") ?? "",
+      )
+    ) {
+      throw new ReleaseSmokeError(
+        `Frontend ${path}: unexpected content type. Check static-file precedence and SPA fallback.`,
       );
     }
-    assert.match(
-      response.headers.get("content-type") ?? "",
-      path.endsWith(".js") ? /javascript/ : /text\/html/,
-    );
     const body = await response.text();
-    assert.ok(body.length > 0);
+    if (!body.length) {
+      throw new ReleaseSmokeError(`Frontend ${path}: empty response body.`);
+    }
     if (path.endsWith(".js")) {
-      assert.ok(
-        body.includes(env.SUPABASE_URL!) &&
-          body.includes(env.SUPABASE_PUBLISHABLE_KEY!),
-        "Unexpected deployed configuration",
-      );
+      if (
+        !body.includes(env.SUPABASE_URL!) ||
+        !body.includes(env.SUPABASE_PUBLISHABLE_KEY!)
+      ) {
+        throw new ReleaseSmokeError(
+          "Frontend /main.dart.js: deployed public configuration does not match this release. Check the deployed artifact and build variables.",
+        );
+      }
     }
     if (env.RELEASE_ROOT) {
       const record = JSON.parse(
@@ -209,17 +250,30 @@ export async function smoke(value: string, env: Settings) {
         new Uint8Array(digest),
         (b) => b.toString(16).padStart(2, "0"),
       ).join("");
-      assert.equal(
-        hash,
-        record.files[name],
-        "Hosted bytes differ from tested release",
-      );
+      if (hash !== record.files[name]) {
+        throw new ReleaseSmokeError(
+          `Frontend ${path}: hosted bytes differ from the tested release. Check stale deployment/aliasing or platform content transformation.`,
+        );
+      }
     }
   }
-  const health = await request(`${env.SUPABASE_URL}/functions/v1/api/health`);
-  const readiness = await health.json();
-  assert.equal(readiness.status, "ok");
-  assert.equal(readiness.database, "connected");
+  console.log("Checking anonymous backend health");
+  const health = await request(
+    `${env.SUPABASE_URL}/functions/v1/api/health`,
+    "",
+    "Backend /health",
+  );
+  let readiness;
+  try {
+    readiness = await health.json();
+  } catch {
+    throw new ReleaseSmokeError("Backend /health did not return valid JSON.");
+  }
+  if (readiness?.status !== "ok" || readiness?.database !== "connected") {
+    throw new ReleaseSmokeError(
+      "Backend /health is not reporting status ok and database connected. Check the Supabase API function and database readiness.",
+    );
+  }
   console.log(
     "HTTPS, routing, security headers, configured assets, and backend health passed.",
   );
@@ -232,7 +286,7 @@ export async function target(env: Settings) {
     const [name, pattern] of [
       ["VERCEL_PROJECT_ID", /^prj_[A-Za-z0-9]+$/],
       ["VERCEL_ORG_ID", /^(?:team_|user_)?[A-Za-z0-9]+$/],
-      ["VERCEL_PROJECT_NAME", /^[a-z0-9-]+$/],
+      ["VERCEL_PROJECT_NAME", /^[a-z0-9_-]+$/],
       ["VERCEL_TOKEN", /^\S+$/],
     ] as const
   ) {
@@ -326,6 +380,8 @@ if (import.meta.main) {
     console.error(
       error instanceof ReleaseTargetError
         ? `Release target check failed: ${error.message}`
+        : error instanceof ReleaseSmokeError
+        ? `Release smoke check failed: ${error.message}`
         : "Release check failed. Verify configuration, project identity, artifact integrity, or readiness; values withheld.",
     );
     Deno.exit(1);

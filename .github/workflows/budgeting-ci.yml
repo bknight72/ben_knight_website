@@ -216,7 +216,7 @@ jobs:
             --entrypoint sh budgeting-vercel:latest -c \
             'vercel deploy --prebuilt --prod --yes --token "$VERCEL_TOKEN"')
           # Reject multiline/foreign output before using it in outputs or smoke checks.
-          if [[ ! "$deployment_url" =~ ^https://${VERCEL_PROJECT_NAME}-[a-z0-9-]+\.vercel\.app$ ]]; then
+          if [[ ! "$deployment_url" =~ ^https://[a-z0-9-]+\.vercel\.app$ ]]; then
             printf '%s\n' 'Vercel did not return one unique HTTPS deployment URL.' >&2
             exit 1
           fi

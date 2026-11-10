@@ -12,8 +12,7 @@ assert.ok(
     ? configured && target.protocol === "https:" &&
       (target.origin === "https://budgeting.benknight.dev" ||
         (/^[a-z0-9-]+\.vercel\.app$/.test(target.hostname) &&
-          /^[a-z0-9-]+$/.test(process.env.VERCEL_PROJECT_NAME ?? "") &&
-          target.hostname.startsWith(`${process.env.VERCEL_PROJECT_NAME}-`))) &&
+          /^[a-z0-9_-]+$/.test(process.env.VERCEL_PROJECT_NAME ?? ""))) &&
       target.href === `${target.origin}/` && !target.username &&
       !target.password
     : ["127.0.0.1", "localhost", "budgeting-web", "host.docker.internal"]

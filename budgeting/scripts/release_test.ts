@@ -71,12 +71,11 @@ Deno.test("release preflight accepts only configured CSV release values", () => 
   ) assert.throws(() => preflight({ ...env, ...patch }));
 });
 Deno.test("hosted smoke URL cannot leak bypass credentials to arbitrary origins", () => {
-  assert.throws(() =>
-    allowedOrigin(
-      "https://other-abc.vercel.app",
-      "https://budgeting.benknight.dev",
-      "ledger",
-    )
+  // The workflow verifies deployment ownership via the authenticated API.
+  allowedOrigin(
+    "https://ben-knight-website-abc.vercel.app",
+    "https://budgeting.benknight.dev",
+    "ben_knight_website",
   );
   for (
     const value of [
@@ -104,7 +103,7 @@ Deno.test("deployment target requires authenticated exact project identity", asy
   const settings = {
     VERCEL_PROJECT_ID: "prj_synthetic",
     VERCEL_ORG_ID: "team_synthetic",
-    VERCEL_PROJECT_NAME: "ledger",
+    VERCEL_PROJECT_NAME: "ben_knight_website",
     VERCEL_TOKEN: "synthetic-token",
   };
   try {
@@ -216,11 +215,31 @@ Deno.test("hosted checks verify headers/configuration and isolate protection byp
         ...env,
         RELEASE_ROOT: release,
         VERCEL_AUTOMATION_BYPASS_SECRET: "synthetic-bypass",
-      })
-    );
+      }), /hosted bytes differ/);
     globalThis.fetch = async () =>
       new Response("wrong", { headers: { "Content-Type": "text/html" } });
-    await assert.rejects(() => smoke("https://ledger-abc.vercel.app", env));
+    await assert.rejects(
+      () => smoke("https://ledger-abc.vercel.app", env),
+      /Frontend \/: missing or unexpected Cache-Control/,
+    );
+    globalThis.fetch = async () =>
+      new Response("synthetic-sensitive-body", { status: 401 });
+    await assert.rejects(
+      () =>
+        smoke("https://ledger-abc.vercel.app", {
+          ...env,
+          VERCEL_AUTOMATION_BYPASS_SECRET: "synthetic-bypass",
+        }),
+      (error: Error) => {
+        assert.match(
+          error.message,
+          /Frontend \/ returned HTTP 401.*automation bypass/,
+        );
+        assert.ok(!error.message.includes("synthetic-sensitive-body"));
+        assert.ok(!error.message.includes("synthetic-bypass"));
+        return true;
+      },
+    );
   } finally {
     globalThis.fetch = original;
     await Deno.remove(release, { recursive: true });

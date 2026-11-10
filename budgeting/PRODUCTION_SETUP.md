@@ -360,7 +360,7 @@ Configure the following through GitHub settings, never tracked files or chat:
 | Repository variable | `SUPABASE_PUBLISHABLE_KEY` | Matching browser-safe publishable key |
 | `budgeting-production` environment variable | `VERCEL_ORG_ID` | Verified account/team identifier |
 | Same environment variable | `VERCEL_PROJECT_ID` | Existing dedicated budgeting project ID |
-| Same environment variable | `VERCEL_PROJECT_NAME` | Exact existing project name, lowercase letters/digits/hyphens |
+| Same environment variable | `VERCEL_PROJECT_NAME` | Exact existing project name, lowercase letters/digits/hyphens/underscores; not the hostname |
 | Same environment variable | `BUDGETING_PRODUCTION_URL` | Exactly `https://budgeting.benknight.dev` |
 | Same environment secret | `VERCEL_TOKEN` | Least-access practical deployment token |
 | Same environment secret, optional | `VERCEL_AUTOMATION_BYPASS_SECRET` | Approved bypass for protected unique deployment smoke |
