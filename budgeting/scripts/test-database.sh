@@ -21,6 +21,8 @@ docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/concurre
 docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/usage_and_leases.sql
 docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/linking_lifecycle.sql
 docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/linking_concurrency.sql
+docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/budgeteer.sql
+docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/budgeteer_concurrency.sql
 # A second empty database verifies clean initialization independently of populated upgrade.
 docker exec "$name" createdb -U postgres fresh
 docker exec "$name" psql -U postgres -d fresh -v ON_ERROR_STOP=1 -f /tests/tests/bootstrap.sql
@@ -28,3 +30,4 @@ for migration in supabase/migrations/*.sql; do
   docker exec "$name" psql -U postgres -d fresh -v ON_ERROR_STOP=1 -f "/tests/migrations/$(basename "$migration")"
 done
 docker exec "$name" psql -U postgres -d fresh -v ON_ERROR_STOP=1 -f /tests/tests/linking_lifecycle.sql
+docker exec "$name" psql -U postgres -d fresh -v ON_ERROR_STOP=1 -f /tests/tests/budgeteer.sql

@@ -37,7 +37,7 @@ const browser = await chromium.launch({
 const context = await browser.newContext({
   viewport: { width: 1440, height: 1000 },
 });
-const page = await context.newPage();
+let page = await context.newPage();
 const errors = [];
 page.on("pageerror", () => errors.push("browser runtime error"));
 // Auth, MFA and financial APIs remain real. Only the explicit enabled variant mocks Stripe.js.
@@ -131,6 +131,44 @@ async function authenticate(password) {
   assert.equal(response.status(), 200, "Real TOTP verification failed");
   return (await response.json()).access_token;
 }
+async function restoredWorkspace() {
+  await semantics();
+  await page.getByText("Synthetic local cash", { exact: false }).first()
+    .waitFor({ timeout: 30000 });
+  assert.equal(
+    await page.getByRole("textbox", { name: "Authenticator code", exact: true })
+      .count(),
+    0,
+    "Remembered MFA session required another authenticator challenge",
+  );
+  assert.equal(
+    await page.getByRole("textbox", { name: "Password", exact: true }).count(),
+    0,
+    "Remembered session required password login",
+  );
+}
+async function authenticationStorageOnly() {
+  const key = `sb-${
+    new URL(fixture.supabaseUrl).hostname.split(".")[0]
+  }-auth-token`;
+  const keys = await page.evaluate(() => Object.keys(localStorage));
+  assert.deepEqual(keys, [key], "Unexpected persistent browser storage");
+  const shape = await page.evaluate((key) => {
+    const session = JSON.parse(localStorage.getItem(key));
+    return {
+      accessToken: typeof session.access_token === "string",
+      refreshToken: typeof session.refresh_token === "string",
+      containsFinancialData:
+        /Browser synthetic cash|Synthetic local cash|fcsess_.*_secret_/
+          .test(JSON.stringify(session)),
+    };
+  }, key);
+  assert.deepEqual(shape, {
+    accessToken: true,
+    refreshToken: true,
+    containsFinancialData: false,
+  });
+}
 try {
   await page.goto(base, { waitUntil: "networkidle" });
   await semantics();
@@ -144,6 +182,42 @@ try {
     await page.getByText("Synthetic local cash", { exact: false }).count() > 0,
     "Real API fixture was not rendered",
   );
+  await page.getByText("Budgeteer", { exact: true }).click();
+  await page.getByText("Give every dollar a place.", { exact: false }).first()
+    .waitFor();
+  await click("Add deposit");
+  await fill("Name", "Browser Budgeteer funding");
+  await fill("Amount (USD)", "1200.00");
+  const planSaved = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === "/rest/v1/rpc/budgeteer_mutate" &&
+    response.request().method() === "POST"
+  );
+  await click("Save deposit");
+  assert.equal(
+    (await planSaved).status(),
+    200,
+    "Budgeteer deposit save failed",
+  );
+  await page.getByText("Browser Budgeteer funding", { exact: false }).first()
+    .waitFor();
+  await page.getByText("Overview", { exact: true }).click();
+  await page.getByText("Budgeteer", { exact: true }).click();
+  await page.getByText("Browser Budgeteer funding", { exact: false }).first()
+    .waitFor();
+  await page.reload({ waitUntil: "networkidle" });
+  await restoredWorkspace();
+  await page.getByText("Budgeteer", { exact: true }).click();
+  await page.getByText("Browser Budgeteer funding", { exact: false }).first()
+    .waitFor();
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(
+    await page.evaluate(() =>
+      document.documentElement.scrollWidth > window.innerWidth
+    ),
+    false,
+    "Budgeteer overflows narrow viewport",
+  );
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByText("Accounts", { exact: true }).click();
   await click("Add manual account");
   await fill("Account name", "Browser synthetic cash");
@@ -174,6 +248,57 @@ try {
   const rows = await check.json();
   assert.equal(rows.length, 1);
   assert.equal(rows[0].owner_id, fixture.ownerId);
+  await page.reload({ waitUntil: "networkidle" });
+  await restoredWorkspace();
+  // Reopening a page in the same browser context retains origin storage, not Dart memory.
+  await page.close();
+  page = await context.newPage();
+  page.on("pageerror", () => errors.push("browser runtime error"));
+  if (fixture.mockStripe) {
+    await page.exposeFunction("localStripeConsent", async (sessionId) => {
+      const response = await fetch("http://127.0.0.1:58082/control", {
+        method: "POST",
+        body: JSON.stringify({ sessionId }),
+      });
+      assert.equal(response.status, 200);
+    });
+  }
+  await page.goto(base, { waitUntil: "networkidle" });
+  await restoredWorkspace();
+  await authenticationStorageOnly();
+  // Synthetic expired JWT is never accepted by the server; real refresh must replace it first.
+  await page.evaluate(() => {
+    const key = Object.keys(localStorage).find((key) =>
+      key.endsWith("-auth-token")
+    );
+    const session = JSON.parse(localStorage.getItem(key));
+    const segments = session.access_token.split(".");
+    const claims = JSON.parse(
+      atob(segments[1].replace(/-/g, "+").replace(/_/g, "/")),
+    );
+    claims.exp = Math.floor(Date.now() / 1000) - 60;
+    segments[1] = btoa(JSON.stringify(claims)).replace(/=/g, "").replace(
+      /\+/g,
+      "-",
+    ).replace(/\//g, "_");
+    session.access_token = segments.join(".");
+    localStorage.setItem(key, JSON.stringify(session));
+  });
+  const refreshResponse = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === "/auth/v1/token" &&
+    new URL(response.url()).searchParams.get("grant_type") ===
+      "refresh_token" &&
+    response.request().method() === "POST"
+  );
+  await page.reload({ waitUntil: "networkidle" });
+  assert.equal(
+    (await refreshResponse).status(),
+    200,
+    "Remembered session refresh failed",
+  );
+  await restoredWorkspace();
+  await authenticationStorageOnly();
+  await page.getByText("Accounts", { exact: true }).click();
   if (fixture.mockStripe) {
     // Interrupt only browser completion dispatch, after synthetic bank consent.
     // Reload must recover the server's pending session without another Stripe modal.
@@ -193,9 +318,7 @@ try {
     assert.ok(interrupted, "Completion interruption was not exercised");
     await page.unroute("**/connections/complete");
     await page.reload({ waitUntil: "networkidle" });
-    await semantics();
-    // Memory-only auth deliberately requires a fresh password + TOTP after browser closure.
-    await authenticate(fixture.password);
+    await restoredWorkspace();
     await page.getByText("Accounts", { exact: true }).click();
     await page.getByRole("button", { name: "Retry completion", exact: true })
       .waitFor();
@@ -240,11 +363,29 @@ try {
       false,
     );
     console.log(
-      "PASS enabled Chromium + real local MFA/functions/Postgres: mocked Stripe.js consent, interrupted completion, reload/reauth, pending-session resume, queued response and persisted subscription status, no paid balance request",
+      "PASS enabled Chromium + real local MFA/functions/Postgres: mocked Stripe.js consent, interrupted completion, remembered MFA on reload, pending-session resume, queued response and persisted subscription status, no paid balance request",
     );
   }
+  const otherTab = await context.newPage();
+  otherTab.on("pageerror", () => errors.push("browser runtime error"));
+  await otherTab.goto(base, { waitUntil: "networkidle" });
+  await otherTab.locator("flutter-view").waitFor({ timeout: 60000 });
+  await otherTab.evaluate(() =>
+    document.querySelector("flt-semantics-placeholder")?.click()
+  );
+  await otherTab.getByText("Synthetic local cash", { exact: false }).first()
+    .waitFor({ timeout: 30000 });
+  const rememberedSession = await page.evaluate(() => {
+    const key = Object.keys(localStorage).find((key) =>
+      key.endsWith("-auth-token")
+    );
+    return { key, session: JSON.parse(localStorage.getItem(key)) };
+  });
   await page.getByText("Sign out", { exact: true }).click();
   await page.getByText("Welcome to your ledger.", { exact: true }).waitFor();
+  await otherTab.getByText("Welcome to your ledger.", { exact: true })
+    .waitFor({ timeout: 30000 });
+  await otherTab.close();
   assert.equal(
     await page.getByRole("group", { name: /^Browser synthetic cash\s/ })
       .count(),
@@ -252,6 +393,32 @@ try {
     "Logout retained financial UI",
   );
   assert.deepEqual(await page.evaluate(() => Object.keys(localStorage)), []);
+  await page.reload({ waitUntil: "networkidle" });
+  await semantics();
+  await page.getByText("Welcome to your ledger.", { exact: true }).waitFor();
+  await page.evaluate(({ key, session }) => {
+    const segments = session.access_token.split(".");
+    const claims = JSON.parse(
+      atob(segments[1].replace(/-/g, "+").replace(/_/g, "/")),
+    );
+    claims.exp = Math.floor(Date.now() / 1000) - 60;
+    segments[1] = btoa(JSON.stringify(claims)).replace(/=/g, "").replace(
+      /\+/g,
+      "-",
+    ).replace(/\//g, "_");
+    session.access_token = segments.join(".");
+    session.refresh_token = "invalid-synthetic-refresh-token";
+    localStorage.setItem(key, JSON.stringify(session));
+  }, rememberedSession);
+  await page.reload({ waitUntil: "networkidle" });
+  await semantics();
+  await page.getByText("Welcome to your ledger.", { exact: true }).waitFor();
+  assert.deepEqual(await page.evaluate(() => Object.keys(localStorage)), []);
+  assert.equal(
+    await page.getByText("Synthetic local cash", { exact: false }).count(),
+    0,
+    "Invalid refresh credentials exposed financial data",
+  );
   assert.equal(
     await page.evaluate(async () =>
       (await navigator.serviceWorker.getRegistrations()).length
@@ -260,7 +427,7 @@ try {
   );
   assert.deepEqual(errors, []);
   console.log(
-    "PASS actual signed-in Chromium: password login, TOTP, real dashboard, manual account persisted through PostgREST, sign-out financial clearing, no persistent storage/service worker",
+    "PASS actual signed-in Chromium: password login, TOTP once, reload/reopen session continuity and refresh, real dashboard, owned PostgREST write, cross-tab sign-out clearing, invalid refresh denial, no financial cache/service worker",
   );
 } finally {
   await context.close();

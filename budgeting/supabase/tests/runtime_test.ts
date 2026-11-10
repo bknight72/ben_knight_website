@@ -43,13 +43,20 @@ Deno.test("database REST headers, owner account lookup, pagination and sanitized
     async () => new Response('[{"id":"account"}]'),
   );
   equal((await found.account("account", "owner")).id, "account");
+  const labels = new Database("", async (url) => {
+    equal(
+      new URL(String(url), "https://example.test").searchParams.get("order"),
+      "entry_id,label_id",
+    );
+    return new Response("[]");
+  });
+  equal(await labels.all("budgeteer_entry_labels"), []);
   await rejects(() =>
     new Database("", async () => new Response("[]")).account("missing", "owner")
   );
   for (
     const message of [
       "monthly_cap",
-      "cooldown",
       "account_not_found",
       "batch_not_found",
       "internal secret",

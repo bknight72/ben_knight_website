@@ -6,7 +6,21 @@ insert into private.app_owner(owner_id) values('00000000-0000-4000-8000-00000000
 insert into public.accounts(id,owner_id,source,name,kind) values
  ('10000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000001','manual','Synthetic A','cash'),
  ('10000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000001','manual','Synthetic B','cash');
-insert into private.refresh_usage(account_id,reserved_at) select '10000000-0000-4000-8000-000000000001',now()-interval '25 hours' from generate_series(1,49);
+-- Explicit same-account requests can reserve concurrently without sharing paid identity.
+select dblink_connect('refresh_a','dbname='||current_database()||' user=postgres');
+select dblink_connect('refresh_b','dbname='||current_database()||' user=postgres');
+select dblink_send_query('refresh_a',$q$select public.backend_state('reserve','{"account_id":"10000000-0000-4000-8000-000000000001"}')$q$);
+select dblink_send_query('refresh_b',$q$select public.backend_state('reserve','{"account_id":"10000000-0000-4000-8000-000000000001"}')$q$);
+create temporary table refresh_results(result jsonb);
+insert into refresh_results select * from dblink_get_result('refresh_a') as t(result jsonb);
+insert into refresh_results select * from dblink_get_result('refresh_b') as t(result jsonb);
+do $$ begin
+ if (select count(distinct result->>'requestId') from refresh_results)<>2 or (select count(*) from private.refresh_usage)<>2 then raise exception 'Concurrent explicit requests were not separately reserved'; end if;
+ if (select count(*) from private.jobs j join private.refresh_usage u on j.dedupe_key='refresh:'||u.request_id::text where j.kind='balance')<>2 then raise exception 'Concurrent requests did not create distinct paid jobs'; end if;
+end $$;
+select dblink_disconnect('refresh_a');
+select dblink_disconnect('refresh_b');
+insert into private.refresh_usage(account_id) select '10000000-0000-4000-8000-000000000001' from generate_series(1,47);
 select dblink_connect('cap_a','dbname='||current_database()||' user=postgres');
 select dblink_connect('cap_b','dbname='||current_database()||' user=postgres');
 select dblink_send_query('cap_a',$q$select public.backend_state('reserve','{"account_id":"10000000-0000-4000-8000-000000000001"}')$q$);
@@ -16,7 +30,7 @@ insert into cap_results select * from dblink_get_result('cap_a',false) as t(resu
 insert into cap_results select * from dblink_get_result('cap_b',false) as t(result jsonb);
 do $$ begin
  if (select count(*) from cap_results)<>1 or (select count(*) from private.refresh_usage)<>50 then raise exception 'Concurrent reservations bypassed cap'; end if;
- if (select count(*) from private.jobs where kind='balance')<>1 then raise exception 'Losing cap reservation created a paid job'; end if;
+ if (select count(*) from private.jobs where kind='balance')<>3 then raise exception 'Losing cap reservation created a paid job'; end if;
 end $$;
 select dblink_disconnect('cap_a');
 select dblink_disconnect('cap_b');

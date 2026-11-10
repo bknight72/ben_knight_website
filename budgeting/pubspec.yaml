@@ -8,13 +8,15 @@ dependencies:
   flutter:
     sdk: flutter
   supabase: any
+  supabase_flutter: any
+  http: any
+  web: any
   flutter_svg: any
   timezone: any
   yaml: any
 dev_dependencies:
   yet_another_json_isolate: any
   crypto: any
-  http: any
   flutter_test:
     sdk: flutter
   integration_test:

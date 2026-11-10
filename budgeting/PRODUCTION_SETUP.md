@@ -574,10 +574,20 @@ leave public signup disabled.
    and verify spending/income totals and refunds against known fixture values.
 5. Export JSON and verify contents privately. Treat the download as sensitive and
    do not upload it to public artifacts or source control.
-6. Log out with a financial dialog open and verify dialogs and records clear.
-   Reload and open a new browser session: sign-in must be required again.
-7. In browser storage tools, verify no auth tokens/financial responses remain in
-   localStorage or persistent caches and no app service worker is registered.
+6. After password and TOTP verification, reload and reopen the same browser:
+   the remembered session should restore without another authenticator code.
+   Verify expired access tokens refresh before financial requests and owner/AAL2
+   validation still runs. Repeat with a second tab, then log out with a financial
+   dialog open: dialogs, records, and remembered credentials must clear across
+   tabs. Reload after logout must require sign-in again. Invalid/revoked refresh
+   tokens and AAL1 sessions must never unlock financial data.
+7. In browser storage tools, allow only project-scoped auth session and approved
+   coordination entries. Financial responses, passwords, TOTP seeds/codes, and
+   Stripe secrets must not be persisted; no app service worker is registered.
+   Remembered refresh tokens are sensitive JavaScript-accessible credentials,
+   not device-bound biometric credentials. Use trusted devices and sign out
+   before sharing them. Hosted Supabase session expiry/revocation still applies;
+   this release does not change hosted Auth timeout settings.
 8. Repeat basic navigation and imports on narrow/mobile and desktop layouts.
 
 ### Password And MFA Recovery
@@ -613,7 +623,7 @@ evidence, then take the first usable encrypted backup.
 - [ ] Explicit release activation authorized; GitHub environment restricted to `master`, correct vars/secrets verified, duplicate Vercel Git deployments disabled, and actual release artifact/deployment evidence recorded.
 - [ ] Only budgeting DNS records changed; HTTPS, headers, assets, direct reloads, and production origin verified.
 - [ ] Synthetic CSV/snapshot/category/budget/export/logout workflows pass on mobile and desktop.
-- [ ] No persistent financial/auth browser storage or service worker; no sensitive diagnostics retained.
+- [ ] Remembered MFA sessions survive reload/reopen, refresh safely, and clear across tabs on logout; only approved auth storage persists, never financial data or service workers; no sensitive diagnostics retained.
 - [ ] VS Code works inside the Dev Container, and operational owner/rollback responsibilities are recorded.
 
 After all boxes pass, begin with a small real CSV import, reconcile it against a
@@ -814,8 +824,8 @@ Vault credentials until provider cleanup is verified.
    or unsupported balances must remain visible, never silently zero.
 4. Explicitly confirm one paid manual balance refresh, verify timestamp/value and
    usage reservation. The server-authoritative cap is 50 attempts per UTC month
-   across the app, including conservative uncertain attempts, with cooldown and
-   provider availability checks. It is not a total Stripe bill cap.
+   across the app, including conservative uncertain attempts, with no app cooldown.
+   Provider availability checks still apply. It is not a total Stripe bill cap.
 5. Disconnect and verify provider unsubscribe/access cleanup, stopped feed and
    retained local history before linking additional accounts. Verify no late
    webhook/job reactivates a locally disconnected account. Do not infer exact

@@ -1,4 +1,5 @@
 import 'dart:js_interop';
+import 'package:web/web.dart' as web;
 
 @JS('budgetBridge.pickCsv')
 external JSPromise<JSString?> _pickCsv();
@@ -44,3 +45,24 @@ Future<bool> linkStripe(String key, String secret) async {
 
 void clearAuthUrl() => _clearAuthUrl();
 void clearStripe() => _clearStripe();
+
+Future<T> withSessionLock<T>(String key, Future<T> Function() action) async {
+  // Web Locks have no persistent metadata and are released when a tab closes.
+  // Unsupported browsers fail closed rather than race rotating refresh tokens.
+  if (!web.window.isSecureContext) {
+    throw const FormatException('Remembered sessions require HTTPS.');
+  }
+  late T result;
+  await web.window.navigator.locks
+      .request(
+          '$key-refresh',
+          ((web.Lock? lock) {
+            return (() async {
+              result = await action();
+              return null;
+            })()
+                .toJS;
+          }).toJS)
+      .toDart;
+  return result;
+}

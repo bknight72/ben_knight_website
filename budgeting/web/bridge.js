@@ -1,4 +1,4 @@
-/* Built at Novacoast. No financial or authentication data is persisted. */
+/* Built at Novacoast. This bridge does not persist financial data or Stripe secrets. */
 window.budgetBridge = {
   stripeGeneration: 0,
   clearStripe() {

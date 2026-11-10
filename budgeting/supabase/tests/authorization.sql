@@ -39,10 +39,10 @@ delete from public.transaction_annotations where transaction_id in(select id fro
 select public.backend_state('undo',jsonb_build_object('id',(select id from public.import_batches),'owner_id','00000000-0000-4000-8000-000000000001'));
 select pg_temp.assert((select count(*)=1 from public.transactions),'undo retained later annotated edit');
 select public.backend_state('reserve','{"account_id":"10000000-0000-4000-8000-000000000001"}');
-do $$ begin
- begin perform public.backend_state('reserve','{"account_id":"10000000-0000-4000-8000-000000000001"}'); raise exception 'cooldown bypass'; exception when raise_exception then if sqlerrm<>'cooldown' then raise; end if; end;
-end $$;
-insert into private.refresh_usage(account_id) select '10000000-0000-4000-8000-000000000001' from generate_series(1,49);
+select public.backend_state('reserve','{"account_id":"10000000-0000-4000-8000-000000000001"}');
+select pg_temp.assert((select count(*)=2 from private.refresh_usage),'immediate repeated requests reserve separate attempts');
+select pg_temp.assert((select count(*)=2 from private.jobs j join private.refresh_usage u on j.dedupe_key='refresh:'||u.request_id::text where j.kind='balance'),'each request has a distinct paid job');
+insert into private.refresh_usage(account_id) select '10000000-0000-4000-8000-000000000001' from generate_series(1,48);
 do $$ begin
  begin perform public.backend_state('reserve','{"account_id":"10000000-0000-4000-8000-000000000001"}'); raise exception 'cap bypass'; exception when raise_exception then if sqlerrm<>'monthly_cap' then raise; end if; end;
 end $$;
@@ -60,6 +60,6 @@ select public.backend_state('yield',jsonb_build_object('id',(select id from priv
 select pg_temp.assert((select count(*)=1 from private.jobs where attempts=0 and cursor='fctxn_old'),'yield preserves cursor without consuming retry budget');
 update private.jobs set status='processing',lease_until=now()-interval '1 minute',attempts=8 where kind='balance';
 select public.backend_state('claim');
-select pg_temp.assert((select status='failed' from private.jobs where kind='balance'),'expired final-attempt lease becomes visible failure');
+select pg_temp.assert((select count(*)=2 and bool_and(status='failed') from private.jobs where kind='balance'),'expired final-attempt leases become visible failures');
 select pg_temp.assert((select count(*)=50 from private.refresh_usage),'uncertain calls never refund reservations');
 rollback;

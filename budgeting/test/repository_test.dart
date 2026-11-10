@@ -137,14 +137,14 @@ void main() {
       () async {
     final client = SupabaseClient('https://example.supabase.co', 'public-key',
         httpClient: MockClient((request) async => http.Response(
-            '{"code":"cooldown","message":"Refresh is cooling down.","retryAt":"2026-11-06","private":"secret"}',
+            '{"code":"provider_cooldown","message":"Provider balance refresh is not yet available.","retryAt":"2026-11-06","private":"secret"}',
             429,
             headers: {'content-type': 'application/json'})));
     addTearDown(client.dispose);
     expect(
         () => LedgerRepository(client).api('accounts/id/balance-refresh'),
         throwsA(isA<FormatException>().having((e) => e.message, 'message',
-            'Refresh is cooling down. Try again after 2026-11-06.')));
+            'Provider balance refresh is not yet available. Try again after 2026-11-06.')));
   });
   test('unexpected API shapes are rejected', () async {
     final client = SupabaseClient('https://example.supabase.co', 'public-key',

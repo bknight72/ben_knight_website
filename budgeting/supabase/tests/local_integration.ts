@@ -146,6 +146,26 @@ const high = await call(
   { challenge_id: challenge.id, code: await totp(factor.totp.secret) },
 );
 const token = high.access_token;
+const refreshed = await call(
+  "/auth/v1/token?grant_type=refresh_token",
+  anon,
+  "POST",
+  { refresh_token: high.refresh_token },
+);
+assert(
+  typeof refreshed.refresh_token === "string" &&
+    refreshed.refresh_token !== high.refresh_token,
+  "MFA session refresh did not rotate refresh credentials",
+);
+assert(
+  (await call(
+    "/rest/v1/rpc/is_budget_owner",
+    refreshed.access_token,
+    "POST",
+    {},
+  )) === true,
+  "Refreshed MFA session lost owner/AAL2 authorization",
+);
 assert(
   (await call("/rest/v1/rpc/is_budget_owner", token, "POST", {})) === true,
   "owner MFA not recognized",
@@ -322,5 +342,5 @@ if (
   );
 }
 console.log(
-  "PASS real local Supabase: trusted identities, MFA, RLS denial, manual data, CSV preview/commit/reimport/undo, annotations, budgets, usage, export, recovery request, logout and expired/tampered JWT denial",
+  "PASS real local Supabase: trusted identities, MFA, refresh rotation preserving AAL2, RLS denial, manual data, CSV preview/commit/reimport/undo, annotations, budgets, usage, export, recovery request, logout and expired/tampered JWT denial",
 );

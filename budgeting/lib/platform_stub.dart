@@ -4,3 +4,5 @@ Future<bool> linkStripe(String key, String secret) async =>
     throw UnsupportedError('Financial Connections requires a web browser.');
 void clearStripe() {}
 void clearAuthUrl() {}
+Future<T> withSessionLock<T>(String key, Future<T> Function() action) =>
+    action();

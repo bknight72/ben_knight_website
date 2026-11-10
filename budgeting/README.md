@@ -12,7 +12,7 @@ For the ordered CSV launch procedure, platform setup, verification matrix, and g
 
 | Component | Responsibility |
 | --- | --- |
-| `lib/`, `web/` | Flutter UI, validated public configuration, in-memory Supabase session, browser CSV/download and Stripe.js bridge |
+| `lib/`, `web/` | Flutter UI, validated public configuration, remembered Supabase MFA session, browser CSV/download and Stripe.js bridge |
 | `config.yaml` | Public defaults loaded before rendering; USD, America/Denver, no rollover, bounded imports, Stripe opt-in |
 | Supabase Auth | Manually provisioned owner, email/password and TOTP MFA; public signup disabled |
 | `supabase/migrations/` | PostgreSQL financial tables, RLS, owner checks, aggregates, durable private jobs and refresh accounting |
@@ -25,6 +25,16 @@ For the ordered CSV launch procedure, platform setup, verification matrix, and g
 Amounts are integer USD cents. Cash inflows are positive; credit balances are interpreted as debt. Posted transactions drive reporting, refunds offset their selected category, and marked transfers/card payments are excluded from budget income/spending. Tracked net position is cash less tracked card debt, not full net worth. Snapshots, not incomplete transaction sums, establish balances; missing and stale balances remain visible.
 
 The `private` schema stores the immutable owner mapping, provider mapping, jobs, webhook deduplication and refresh reservations. Browser roles cannot access it. Financial tables and RPCs require the provisioned owner and verified MFA, including direct PostgREST calls. Service-role credentials bypass RLS and must remain backend-only. Auth uses the explicitly approved personal-app email/password + TOTP exception, not Novacoast OIDC.
+
+## Budgeteer
+
+Budgeteer is a separate monthly USD funding plan. Add deposits to one pooled vertical bar, then add withdrawals that occupy proportional sections. Reorder withdrawals and single-level groups, move entries between groups, and apply reusable custom labels. Keyboard and touch users can use explicit movement controls instead of dragging. Remaining funding and over-allocation are shown explicitly; this is not a live account balance or a replacement for ledger reports.
+
+Plans, groups, entries, labels, and associations persist in dedicated `budgeteer_*` PostgreSQL tables. Entries can be manual or explicitly linked to bank transactions. Editing a plan never edits raw bank transactions, ledger annotations, categories, or balances. Linked entries retain independent names and amounts; bank changes are flagged for explicit source refresh or unlinking. Source deletion preserves planning entries and their snapshots. Plans do not roll over automatically.
+
+Authenticated owner/MFA-only `budgeteer_read` and `budgeteer_mutate` RPCs return canonical month-scoped state. Saves and reorders are atomic and revision-checked; stale tabs must reload before reapplying edits. Viewing an empty month does not create a plan. Reusable label edits use their returned update token for concurrency checks. Portable JSON export includes Budgeteer tables. Apply the forward Budgeteer migration through the existing approved deployment process before using this page; local validation does not apply hosted migrations.
+
+Budgeteer domain, widget, repository, and SQL tests run through the existing containerized validation scripts. No additional environment variables or host dependencies are needed.
 
 ## Prerequisites
 
@@ -119,7 +129,9 @@ Repackage an already-built artifact without recompilation:
 sh budgeting/scripts/package-vercel.sh
 ```
 
-The packager copies only static web assets, omits `flutter_service_worker.js`, and generates Vercel Build Output API version 3 routes: security headers, filesystem precedence, then SPA fallback. Financial data is never an offline cache. Sessions and financial responses must not be persisted in browser storage; sign-in is required again after session loss.
+The packager copies only static web assets, omits `flutter_service_worker.js`, and generates Vercel Build Output API version 3 routes: security headers, filesystem precedence, then SPA fallback. Financial data is never an offline cache. Authentication credentials are deliberately remembered in project-scoped browser storage so reloads and browser restarts can restore an MFA-verified session. Financial responses, passwords, TOTP setup secrets/codes, and Stripe client secrets must not be persisted. Fresh authentication still requires TOTP; session restoration still verifies the owner and AAL2 before loading financial data.
+
+Remembered access lasts until logout, revocation, browser storage removal, or Supabase session expiry. Short-lived access tokens are renewed using refresh tokens, not made indefinitely valid. Browser-stored tokens are sensitive bearer credentials accessible to same-origin JavaScript and potentially browser extensions or other users of the device. Use a trusted device, retain CSP and dependency protections, and sign out before sharing it. This is not biometric/passkey authentication or hardware-bound token storage. Hosted session timeouts and refresh-token policies remain controlled by Supabase; this change does not alter them.
 
 ### Local Runtime
 
@@ -151,7 +163,7 @@ docker run --rm -v "$PWD/budgeting/supabase:/work" -w /work \
   denoland/deno:latest sh tests/run-deno.sh
 ```
 
-`test-database.sh` creates disposable plain PostgreSQL, bootstraps synthetic Auth roles, applies migrations in filename order, then runs `authorization.sql`, `concurrency.sql` and `usage_and_leases.sql`. These cover owner/MFA authorization, cap concurrency, UTC usage boundaries/cooldowns and worker lease fencing. `supabase/tests/bootstrap.sql` is **only** for disposable plain PostgreSQL; never apply it to managed Supabase. Local-stack tests must use the real Supabase Auth/PostgREST/Edge services rather than that bootstrap as a substitute.
+`test-database.sh` creates disposable plain PostgreSQL, bootstraps synthetic Auth roles, applies migrations in filename order, then runs `authorization.sql`, `concurrency.sql` and `usage_and_leases.sql`. These cover owner/MFA authorization, cap concurrency, immediate repeated refresh reservations, UTC usage boundaries and worker lease fencing. `supabase/tests/bootstrap.sql` is **only** for disposable plain PostgreSQL; never apply it to managed Supabase. Local-stack tests must use the real Supabase Auth/PostgREST/Edge services rather than that bootstrap as a substitute.
 
 `test-browser.sh` requires existing `build/web/` output. It builds container-only Playwright tooling and serves that output in a disposable nginx container, exercising mobile/desktop/landscape layouts, deep-link reloads and browser-storage/service-worker/error checks. Artifact smoke tests do not by themselves verify signed-in financial flows, real SMTP, live Stripe, or Vercel's production CSP.
 
@@ -187,6 +199,8 @@ sh budgeting/supabase/tests/run-local.sh
 ```
 
 This separate synthetic artifact uses a test-shaped public key. Disposable function wrappers intercept only Stripe HTTP requests; Auth, MFA, PostgreSQL and function dispatch remain real. The browser mocks Stripe.js consent, interrupts completion, reloads and resumes the same pending session. No real bank calls occur. For offline local checks with an already cached container image, `BUDGETING_FLUTTER_IMAGE=budgeting-build:latest BUDGETING_PUB_OFFLINE=true` permits cached dependency resolution without weakening TLS. CI continues to fetch dependencies normally.
+
+The current auth acceptance harness checks password/TOTP once, refresh-token rotation with preserved owner/AAL2 authorization, remembered login after reload and page reopening, project-scoped authentication storage without financial caches, and cross-tab logout followed by a signed-out reload. This updated real local Supabase/Chromium flow passed on November 10, 2026, including expired-access refresh and invalid-refresh denial. True browser-process restart and hosted session expiry/revocation policies still require deployment acceptance on the intended devices. No hosted authentication settings were changed by local validation.
 
 The harness uses a `corporate_ca` BuildKit secret for image trust and mounts the public certificate read-only for runtime `NODE_EXTRA_CA_CERTS`. This is separate from Flutter/browser `BUILD_CA_FILE` and recovery database TLS roots; no TLS bypass is used.
 
@@ -225,7 +239,7 @@ The owner insert initializes the profile and categories. This is not first-user-
 4. Configure custom SMTP in Supabase Auth with a verified sender/domain, provider credentials and delivery limits. Test password-reset delivery, expiration, single-use behavior and redirects with the owner before real imports. Local email capture is not proof of production deliverability.
 5. Deploy `api`, `stripe-webhook`, and `worker` from `budgeting/supabase/functions/` with the checked-in function settings. Gateway JWT verification is disabled deliberately: `api` validates the bearer session plus owner/MFA itself, webhook verifies Stripe signatures, and worker checks its independent secret. Disabling gateway JWT checks does not make financial routes anonymous.
 6. Inject backend secrets, exact `ALLOWED_ORIGINS`, and initially `STRIPE_ENABLED=false`, `STRIPE_MODE=test`, `STRIPE_LIVE_AUTHORIZED=false`. Verify direct anonymous, wrong-owner, `aal1` and expired-session denial on both Edge API and PostgREST, not just UI hiding.
-7. Enroll and challenge the owner's TOTP. Verify logout/session loss clears open financial dialogs and data, a new browser session needs sign-in, and no tokens/financial responses remain in local storage or service workers.
+7. Enroll and challenge the owner's TOTP. Verify reload and reopening the same browser restore the MFA-verified session without another code; expired access tokens refresh before financial access. Verify explicit logout/session loss clears open financial dialogs and data, logout removes remembered credentials across tabs, and the next reload requires sign-in. Browser storage may contain only the approved auth session/coordination entries, never financial responses or Stripe secrets; no app service worker is permitted.
 
 ### MFA Recovery
 
@@ -259,13 +273,13 @@ Financial routes include a second `/api/v1` segment, for example `$SUPABASE_URL/
 | `GET /api/v1/connections/pending` | Owner/MFA-only resumable session summaries `{sessions:[{sessionId,createdAt,status}]}`, never client secrets |
 | `POST /api/v1/connections/complete` | `{sessionId}`; authoritative owner/customer/mode/permission checks; `{accountIds,status:'queued'}` durably accepts subscriptions before async sync, completed replay returns recorded result |
 | `POST /api/v1/accounts/{id}/subscription-retry` | `{confirmCost:true}`; explicitly requeues the same accepted subscription job/identity after failure, no new link or balance purchase |
-| `POST /api/v1/accounts/{id}/balance-refresh` | `{confirmCost:true}`; 202 durable request ID/status, subject to cap/cooldown/provider checks |
+| `POST /api/v1/accounts/{id}/balance-refresh` | `{confirmCost:true}`; 202 durable request ID/status, no app cooldown, subject to cap/provider checks |
 | `POST /api/v1/accounts/{id}/disconnect` | Durable provider cleanup, retaining local history |
 | `POST /api/v1/accounts/{id}/delete` | `{confirmDelete:true}`; provider cleanup before local cascading deletion |
 
 CSV mapping names exact headers: `date`, `description`, either signed `amount` or `debit`/`credit`, optional `transactionId`/`currency`, explicit `dateFormat` (`YYYY-MM-DD`, `MM/DD/YYYY`, `DD/MM/YYYY`) and `sign` (`inflow-positive` or `outflow-positive`). Imports are bounded to 5 MiB/10,000 rows; raw CSV is not retained. Same-source ambiguous repeats require review. Cross-source overlapping dates are refused even with confirmation; reconcile/remove overlapping history manually rather than double-counting.
 
-Profiles, manual accounts/snapshots, categories, annotations and budgets use owner/MFA-protected PostgREST tables/RPCs. Provider writes remain backend-only. Errors are sanitized `{code,message,requestId,retryAt?}`, with 401 unauthenticated/expired, 403 owner/MFA required, 422 validation, 429 cooldown/cap/throttling and 503 unavailable/disabled. See OpenAPI for exact current success/error schemas.
+Profiles, manual accounts/snapshots, categories, annotations and budgets use owner/MFA-protected PostgREST tables/RPCs. Provider writes remain backend-only. Errors are sanitized `{code,message,requestId,retryAt?}`, with 401 unauthenticated/expired, 403 owner/MFA required, 422 validation, 429 cap/provider availability/throttling and 503 unavailable/disabled. See OpenAPI for exact current success/error schemas.
 
 ### Worker Operations
 
@@ -424,7 +438,7 @@ Choose a manual backup cadence based on acceptable data loss, for example before
 - v1 is USD and America/Denver only, with no budget rollover, investments, loans, full net worth, shared access, recurring-bill prediction or money movement.
 - CSV and Stripe overlapping date ranges require manual reconciliation/removal. Import undo retains annotated rows; review the resulting ledger. Repeated-file identities and duplicate candidates do not prove two similar purchases are the same transaction.
 - The frontend fetches the ledger in paginated memory and renders a bounded visible list, not a large multi-user analytics backend. No persistent offline financial access is supported.
-- Balance refresh has an app-enforced 24-hour per-account cooldown and 50 reserved attempts per UTC month across the app, with conservative accounting for uncertain failures and deleted accounts. Reporting months are Denver time; the cap month is UTC. Provider availability can impose additional delays; the usage timestamp is not a promise Stripe will accept a request.
+- Explicitly confirmed paid balance refreshes have no app cooldown and allow 50 reserved attempts per UTC month across the app, with conservative accounting for uncertain failures and deleted accounts. Reporting months are Denver time; the cap month is UTC. Provider availability can impose delays; the usage timestamp reflects monthly-cap eligibility only and is not a promise Stripe will accept a request.
 - Published Stripe pricing checked November 10, 2026 was $0.30 per institution/account holder/month for transactions and $0.10 per successful balance call, **not an all-in quote or billing guarantee**. Owner accepts daily paid transaction subscriptions and separate explicit balance refresh charges. Recheck current terms/prices, other fees and tax before enabling. The 50-attempt UTC-month cap cannot limit subscriptions, external dashboard/API activity or charges outside this app; linking never prefetches paid balances. History availability is institution-dependent, up to 180 days.
 - Each specific Wells Fargo account/card, Citi account/card and Mountain America account/card is **unverified until live testing**. An institution appearing in Stripe marketing does not establish transaction/balance coverage, personal-use eligibility, history depth or ongoing consent availability.
 - Supabase Free has historically advertised 500 MB database storage and 500,000 Edge Function invocations, possible pausing after a week of inactivity, and no automatic database backups. Recheck current quotas/pricing; one-minute workers consume invocations even without new data. Free-tier pausing and quotas can interrupt sync/recovery; no uptime guarantee is implied.

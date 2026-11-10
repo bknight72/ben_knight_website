@@ -13,6 +13,8 @@ void main() {
         modules,
         {
           'lib/app.dart',
+          'lib/budgeteer.dart',
+          'lib/budgeteer_domain.dart',
           'lib/config.dart',
           'lib/domain.dart',
           'lib/main.dart',
@@ -20,6 +22,7 @@ void main() {
           'lib/platform_stub.dart',
           'lib/platform_web.dart',
           'lib/repository.dart',
+          'lib/session.dart',
         },
         reason:
             'Any new production module must be added to the fixed coverage denominator. Browser adapters must not silently vanish from VM coverage.');

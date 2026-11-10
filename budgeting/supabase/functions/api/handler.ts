@@ -352,6 +352,11 @@ export async function handle(
             "categories",
             "monthly_budgets",
             "import_batches",
+            "budgeteer_plans",
+            "budgeteer_groups",
+            "budgeteer_entries",
+            "budgeteer_labels",
+            "budgeteer_entry_labels",
           ]
         ) data[table] = await db.all(table, `&owner_id=eq.${ownerId}`);
         response = json(safeExport(data), 200, {

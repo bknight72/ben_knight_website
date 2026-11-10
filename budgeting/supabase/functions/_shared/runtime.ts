@@ -46,11 +46,11 @@ export class Database {
           "CSV and provider dates overlap. Reconcile account coverage before importing or syncing.",
         );
       }
-      if (/monthly_cap|cooldown/.test(error.message || "")) {
+      if (/monthly_cap/.test(error.message || "")) {
         throw new ApiError(
           429,
-          /monthly_cap/.test(error.message) ? "monthly_cap" : "cooldown",
-          "Balance refresh limit reached. Try again after the cooldown or next UTC month.",
+          "monthly_cap",
+          "Balance refresh limit reached. Try again next UTC month.",
         );
       }
       if (
@@ -109,6 +109,8 @@ export class Database {
         `${table}?select=*&order=${
           table === "transaction_annotations"
             ? "transaction_id"
+            : table === "budgeteer_entry_labels"
+            ? "entry_id,label_id"
             : table === "profiles"
             ? "owner_id"
             : "id"

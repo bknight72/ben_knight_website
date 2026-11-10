@@ -16,7 +16,7 @@ end $$;
 set local request.jwt.claims='{"sub":"00000000-0000-4000-8000-000000000001","aal":"aal2"}';
 select pg_temp.assert(public.budget_refresh_usage()->>'reservedAttempts'='0','initial usage zero');
 select pg_temp.assert(public.budget_refresh_usage()->>'remainingAttempts'='50','initial remaining 50');
-select pg_temp.assert(public.budget_refresh_usage()->'accounts'->0->>'nextEligibleRefreshAt' is null,'no initial cooldown');
+select pg_temp.assert(public.budget_refresh_usage()->'accounts'->0->>'nextEligibleRefreshAt' is null,'no initial app delay');
 select pg_temp.assert(not has_function_privilege('anon','public.budget_refresh_usage()','execute'),'anonymous usage revoked');
 reset role;
 select pg_temp.assert(not has_function_privilege('authenticated','private.backend_state_legacy(text,jsonb)','execute'),'legacy gateway revoked');
@@ -26,12 +26,14 @@ select public.backend_state('reserve','{"account_id":"10000000-0000-4000-8000-00
 set local role authenticated;
 select pg_temp.assert(public.budget_refresh_usage()->>'reservedAttempts'='1','reserved usage counted');
 select pg_temp.assert(public.budget_refresh_usage()->>'remainingAttempts'='49','remaining reduced');
-select pg_temp.assert((public.budget_refresh_usage()->'accounts'->0->>'nextEligibleRefreshAt')::timestamptz=now()+interval '24 hours','24h cooldown');
+select pg_temp.assert(public.budget_refresh_usage()->'accounts'->0->>'nextEligibleRefreshAt' is null,'recent reservation imposes no app delay');
 reset role;
-insert into private.refresh_usage(account_id) select '10000000-0000-4000-8000-000000000001' from generate_series(1,49);
+select public.backend_state('reserve','{"account_id":"10000000-0000-4000-8000-000000000001"}');
+select pg_temp.assert((select sync_error='balance_not_ready' from public.accounts),'repeat reservation preserves pending lifecycle state');
+insert into private.refresh_usage(account_id) select '10000000-0000-4000-8000-000000000001' from generate_series(1,48);
 set local role authenticated;
 select pg_temp.assert(public.budget_refresh_usage()->>'remainingAttempts'='0','cap zero remaining');
-select pg_temp.assert((public.budget_refresh_usage()->'accounts'->0->>'nextEligibleRefreshAt')::timestamptz>=((date_trunc('month',now() at time zone 'UTC')+interval '1 month') at time zone 'UTC'),'cap waits until UTC month');
+select pg_temp.assert((public.budget_refresh_usage()->'accounts'->0->>'nextEligibleRefreshAt')::timestamptz=((date_trunc('month',now() at time zone 'UTC')+interval '1 month') at time zone 'UTC'),'cap waits exactly until next UTC month');
 reset role;
 -- Historical reservation excluded even when server timezone differs from UTC.
 set local timezone='Pacific/Auckland';

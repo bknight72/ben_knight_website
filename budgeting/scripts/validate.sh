@@ -23,7 +23,7 @@ docker run --rm -u root "$@" -v "$PWD:/workspace" -w /workspace budgeting-flutte
   dart format --output=none --set-exit-if-changed lib test integration_test scripts/check_coverage.dart
   flutter analyze
   flutter test --timeout 60s --coverage
-  dart scripts/check_coverage.dart coverage/lcov.info lib/app.dart lib/domain.dart lib/config.dart lib/repository.dart lib/main.dart
+    dart scripts/check_coverage.dart coverage/lcov.info lib/app.dart lib/domain.dart lib/config.dart lib/repository.dart lib/main.dart lib/session.dart lib/budgeteer.dart lib/budgeteer_domain.dart
   flutter test --no-pub --timeout 60s --dart-define=STRIPE_ENABLED=true --dart-define=STRIPE_PUBLISHABLE_KEY=pk_test_localSyntheticOnly123 test/config_test.dart test/linking_test.dart
   flutter build web --release --no-web-resources-cdn
   '\''

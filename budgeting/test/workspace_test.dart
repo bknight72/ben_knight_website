@@ -25,10 +25,7 @@ class FixtureRepository extends LedgerRepository {
               'limit': 50,
               'remainingAttempts': 48,
               'accounts': [
-                {
-                  'accountId': 'a',
-                  'nextEligibleRefreshAt': '2026-11-07T00:00:00Z'
-                }
+                {'accountId': 'a', 'nextEligibleRefreshAt': null}
               ]
             };
   @override
@@ -111,7 +108,7 @@ Future<void> mount(WidgetTester tester,
 
 void main() {
   testWidgets(
-      'connected account actions disclose costs, cooldowns, and preserve confirmation',
+      'connected account actions disclose costs without app cooldown and preserve confirmation',
       (tester) async {
     tester.view.physicalSize = const Size(1440, 1400);
     tester.view.devicePixelRatio = 1;
@@ -124,13 +121,18 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Accounts'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('2026-11-07T00:00:00Z'), findsOneWidget);
     await tester.tap(find.text('Request paid refresh'));
     await tester.pumpAndSettle();
     expect(find.textContaining('approximately \$0.10'), findsOneWidget);
+    expect(find.textContaining('There is no app cooldown'), findsOneWidget);
     await tester.tap(find.text('Confirm'));
     await tester.pumpAndSettle();
     expect(find.textContaining('Refresh requested.'), findsOneWidget);
+    await tester.tap(find.text('Request paid refresh'));
+    await tester.pumpAndSettle();
+    expect(find.text('Refresh balance?'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Disconnect'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Confirm'));

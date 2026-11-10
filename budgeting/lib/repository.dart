@@ -1,5 +1,6 @@
 import 'package:supabase/supabase.dart';
 import 'domain.dart';
+import 'budgeteer_domain.dart';
 
 const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
 const supabaseKey = String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY');
@@ -98,6 +99,42 @@ class LedgerRepository {
           .range(start, start + 499);
       result.addAll(List<Json>.from(page));
       if (page.length < 500) return result;
+    }
+  }
+
+  Future<BudgeteerState> budgeteerRead(String month) =>
+      _budgeteerRpc('budgeteer_read', {'p_month': _budgeteerMonth(month)});
+
+  Future<BudgeteerState> budgeteerMutate(
+          String month, int revision, String operation, Json payload) =>
+      _budgeteerRpc('budgeteer_mutate', {
+        'p_month': _budgeteerMonth(month),
+        'p_revision': revision,
+        'p_operation': operation,
+        'p_payload': payload,
+      });
+
+  String _budgeteerMonth(String month) {
+    if (!RegExp(r'^\d{4}-(0[1-9]|1[0-2])$').hasMatch(month)) {
+      throw const FormatException('Choose a valid reporting month.');
+    }
+    return '$month-01';
+  }
+
+  Future<BudgeteerState> _budgeteerRpc(String name, Json parameters) async {
+    try {
+      final result = await client.rpc(name, params: parameters);
+      if (result is! Map) {
+        throw const FormatException('Invalid Budgeteer response.');
+      }
+      return BudgeteerState.fromJson(Map<String, dynamic>.from(result));
+    } on PostgrestException catch (error) {
+      if (error.message.contains('budgeteer_conflict')) {
+        throw const FormatException(
+            'budgeteer_conflict: This plan or label changed elsewhere. Reload before reapplying your edit.');
+      }
+      throw const FormatException(
+          'Budgeteer could not complete this request. Check your owner/MFA session and entry values, then retry.');
     }
   }
 }

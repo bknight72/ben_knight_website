@@ -3,10 +3,12 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:supabase/supabase.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show Supabase;
 import 'domain.dart';
 import 'platform.dart' as platform;
 import 'repository.dart';
 import 'config.dart';
+import 'budgeteer.dart';
 
 const ink = Color(0xff102e2c);
 const teal = Color(0xff17695c);
@@ -63,9 +65,11 @@ String connectionState(Json account) {
 class BudgetApp extends StatelessWidget {
   final AppConfig config;
   final bool configurationError;
+  final bool sessionError;
   const BudgetApp(
       {super.key,
       this.config = const AppConfig(),
+      this.sessionError = false,
       this.configurationError = false});
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -106,13 +110,17 @@ class BudgetApp extends StatelessWidget {
           cardTheme: const CardThemeData(
               elevation: 0, color: Colors.white, margin: EdgeInsets.zero),
         ),
-        home: configurationError
+        home: sessionError
             ? const EntryFrame(
                 child: Text(
-                    'Public configuration could not be loaded or validated. No financial service was initialized.'))
-            : supabaseUrl.isEmpty || supabaseKey.isEmpty
-                ? const ConfigurationScreen()
-                : AuthGate(config: config),
+                    'Remembered sign-in could not initialize. Allow browser storage for this site and reload. No financial data was loaded.'))
+            : configurationError
+                ? const EntryFrame(
+                    child: Text(
+                        'Public configuration could not be loaded or validated. No financial service was initialized.'))
+                : supabaseUrl.isEmpty || supabaseKey.isEmpty
+                    ? const ConfigurationScreen()
+                    : AuthGate(config: config),
       );
 }
 
@@ -154,7 +162,7 @@ class ConfigurationScreen extends StatelessWidget {
           Text(
               'Build with SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY to connect your provisioned owner account. Public signup is not available. Stripe remains disabled until explicitly approved and configured.'),
           SizedBox(height: 22),
-          Text('SESSION-ONLY ACCESS  /  NO OFFLINE FINANCIAL STORAGE',
+          Text('MFA-PROTECTED ACCESS  /  NO OFFLINE FINANCIAL STORAGE',
               style: TextStyle(fontSize: 10, letterSpacing: 1.4, color: muted)),
         ],
       ));
@@ -231,7 +239,7 @@ class AuthGate extends StatefulWidget {
   State<AuthGate> createState() => _AuthGateState();
 }
 
-class _AuthGateState extends State<AuthGate> {
+class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
   late final SupabaseClient client;
   StreamSubscription<AuthState>? subscription;
   Timer? expiryTimer;
@@ -239,6 +247,11 @@ class _AuthGateState extends State<AuthGate> {
   bool recovery = false;
   bool busy = false;
   bool resetMode = false;
+  bool restoring = true;
+  bool signingOut = false;
+  String? authorizedToken;
+  int sessionEpoch = 0;
+  Future<void>? validation;
   String? error;
   String? notice;
   String? factorId;
@@ -251,13 +264,24 @@ class _AuthGateState extends State<AuthGate> {
   @override
   void initState() {
     super.initState();
-    // The plain Dart client has no browser session store. Tokens live in memory only.
-    client = widget.client ??
-        SupabaseClient(supabaseUrl, supabaseKey,
-            authOptions:
-                const AuthClientOptions(authFlowType: AuthFlowType.implicit));
+    WidgetsBinding.instance.addObserver(this);
+    client = widget.client ?? Supabase.instance.client;
+    final initialUri = widget.callbackUri ?? Uri.base;
+    final callback = initialUri.fragment.contains('access_token=') ||
+        initialUri.fragment.contains('error=');
+    recovery = callback && initialUri.fragment.contains('type=recovery');
     subscription = client.auth.onAuthStateChange.listen((state) {
       if (!mounted) return;
+      if (state.session?.accessToken !=
+          client.auth.currentSession?.accessToken) {
+        return;
+      }
+      if (signingOut && state.session != null) {
+        unawaited(client.auth
+            .signOut(scope: SignOutScope.local)
+            .catchError((Object _) {}));
+        return;
+      }
       if (state.event == AuthChangeEvent.passwordRecovery) {
         setState(() {
           recovery = true;
@@ -265,26 +289,15 @@ class _AuthGateState extends State<AuthGate> {
         });
         Navigator.of(context).popUntil((route) => route.isFirst);
       }
-      expiryTimer?.cancel();
       if (state.session == null) {
+        if (state.event == AuthChangeEvent.signedOut) signingOut = true;
+        sessionEpoch++;
         clearSessionUi();
       } else {
-        final expiresAt = state.session!.expiresAt;
-        if (expiresAt != null) {
-          expiryTimer = Timer(
-              Duration(
-                  milliseconds:
-                      (expiresAt * 1000 - DateTime.now().millisecondsSinceEpoch)
-                          .clamp(0, 2147483647)
-                          .toInt()), () {
-            if (mounted) {
-              clearSessionUi();
-              unawaited(client.auth
-                  .signOut(scope: SignOutScope.local)
-                  .catchError((Object _) {}));
-            }
-          });
+        if (authorized && state.session!.accessToken != authorizedToken) {
+          lockWorkspace();
         }
+        scheduleExpiry();
       }
       if (state.session != null &&
           client.auth.mfa.getAuthenticatorAssuranceLevel().currentLevel?.name !=
@@ -293,32 +306,85 @@ class _AuthGateState extends State<AuthGate> {
         setState(() => authorized = false);
         Navigator.of(context).popUntil((route) => route.isFirst);
       }
+      if (!busy && !restoring && !recovery && state.session != null) {
+        unawaited(validateSession());
+      }
+    }, onError: (Object _) {
+      if (mounted && !sessionFresh) lockWorkspace();
     });
-    final initialUri = widget.callbackUri ?? Uri.base;
-    if (initialUri.fragment.contains('access_token=') ||
-        initialUri.fragment.contains('error=')) {
-      run(() async {
-        final callback = initialUri;
-        recovery = callback.fragment.contains('type=recovery');
+    unawaited(run(() async {
+      if (callback) {
         platform.clearAuthUrl();
-        await client.auth.getSessionFromUrl(callback);
+        await client.auth.getSessionFromUrl(initialUri);
         if (!recovery) await checkMfa();
-      });
+      } else if (client.auth.currentSession != null) {
+        await checkMfa();
+      }
+      if (mounted) setState(() => restoring = false);
+    }).whenComplete(() {
+      if (mounted) setState(() => restoring = false);
+    }));
+  }
+
+  bool get sessionFresh {
+    final expiry = client.auth.currentSession?.expiresAt;
+    return expiry != null &&
+        expiry * 1000 > DateTime.now().millisecondsSinceEpoch;
+  }
+
+  void scheduleExpiry() {
+    expiryTimer?.cancel();
+    final expiry = client.auth.currentSession?.expiresAt;
+    if (expiry == null) return;
+    expiryTimer = Timer(
+        Duration(
+            milliseconds:
+                (expiry * 1000 - DateTime.now().millisecondsSinceEpoch)
+                    .clamp(0, 2147483647)
+                    .toInt()), () {
+      if (!mounted) return;
+      lockWorkspace();
+      unawaited(validateSession());
+    });
+  }
+
+  void lockWorkspace() {
+    setState(() => authorized = false);
+    platform.clearStripe();
+    Navigator.of(context).popUntil((route) => route.isFirst);
+  }
+
+  Future<void> validateSession() {
+    return validation ??= run(() async {
+      await checkMfa();
+    }).whenComplete(() => validation = null);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      if (!sessionFresh) lockWorkspace();
+      if (!recovery && !signingOut && client.auth.currentSession != null) {
+        unawaited(validateSession());
+      }
     }
   }
 
   @override
   void dispose() {
+    sessionEpoch++;
+    WidgetsBinding.instance.removeObserver(this);
     expiryTimer?.cancel();
     subscription?.cancel();
     email.dispose();
     password.dispose();
     code.dispose();
-    client.dispose();
+    if (widget.client != null) client.dispose();
     super.dispose();
   }
 
   void clearSessionUi() {
+    expiryTimer?.cancel();
     platform.clearStripe();
     setState(() {
       authorized = false;
@@ -352,17 +418,51 @@ class _AuthGateState extends State<AuthGate> {
   }
 
   Future<void> checkMfa() async {
+    final epoch = sessionEpoch;
+    if (recovery || signingOut || client.auth.currentSession == null) return;
+    if (!sessionFresh) {
+      lockWorkspace();
+      await client.auth.refreshSession();
+    }
+    if (!mounted ||
+        epoch != sessionEpoch ||
+        recovery ||
+        signingOut ||
+        !sessionFresh) {
+      return;
+    }
+    final token = client.auth.currentSession!.accessToken;
     final assurance = client.auth.mfa.getAuthenticatorAssuranceLevel();
     if (assurance.currentLevel?.name == 'aal2') {
-      if (await client.rpc('is_budget_owner') != true) {
-        await client.auth.signOut(scope: SignOutScope.local);
+      final owner = await client.rpc('is_budget_owner');
+      if (!mounted || epoch != sessionEpoch || recovery || signingOut) {
+        return;
+      }
+      if (client.auth.currentSession?.accessToken != token) {
+        await checkMfa();
+        return;
+      }
+      if (owner != true) {
+        await logout();
         throw const FormatException(
             'This identity is not the provisioned ledger owner.');
       }
-      if (mounted) setState(() => authorized = true);
+      if (mounted &&
+          epoch == sessionEpoch &&
+          !recovery &&
+          !signingOut &&
+          sessionFresh &&
+          client.auth.currentSession?.accessToken == token) {
+        setState(() {
+          authorized = true;
+          authorizedToken = token;
+        });
+        scheduleExpiry();
+      }
       return;
     }
     final factors = await client.auth.mfa.listFactors();
+    if (!mounted || epoch != sessionEpoch || signingOut || recovery) return;
     final verified = factors.totp.where((f) => f.status.name == 'verified');
     if (verified.isNotEmpty) {
       factorId = verified.first.id;
@@ -373,6 +473,7 @@ class _AuthGateState extends State<AuthGate> {
       }
       final enrollment = await client.auth.mfa.enroll(
           factorType: FactorType.totp, friendlyName: 'Ledger authenticator');
+      if (!mounted || epoch != sessionEpoch || signingOut || recovery) return;
       factorId = enrollment.id;
       final image = enrollment.totp?.qrCode;
       qr = image;
@@ -390,21 +491,54 @@ class _AuthGateState extends State<AuthGate> {
     if (mounted) setState(() {});
   }
 
+  Future<void> logout() async {
+    signingOut = true;
+    sessionEpoch++;
+    clearSessionUi();
+    try {
+      await client.auth.signOut(scope: SignOutScope.local);
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (authorized && client.auth.currentSession != null) {
+    if (authorized && sessionFresh && !recovery && !signingOut) {
       return LedgerShell(
           key: ValueKey(client.auth.currentUser?.id),
           config: widget.config,
           repository: LedgerRepository(client),
           onLogout: () async {
-            // Remove the financial subtree immediately, even if the remote logout fails.
-            setState(() => authorized = false);
-            Navigator.of(context).popUntil((route) => route.isFirst);
-            await run(() async {
-              await client.auth.signOut(scope: SignOutScope.local);
-            });
+            // Logout must not be suppressed by an in-flight owner check.
+            try {
+              await logout();
+            } catch (_) {
+              if (mounted) {
+                setState(() => error =
+                    'Signed out on this device. Remote sign-out could not be confirmed.');
+              }
+            }
           });
+    }
+    if (restoring) {
+      return const EntryFrame(child: Text('Restoring secure session...'));
+    }
+    if (!signingOut &&
+        !recovery &&
+        client.auth.currentSession != null &&
+        !sessionFresh) {
+      return EntryFrame(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Text(
+            'Your secure session needs to reconnect. Financial data is hidden until fresh credentials are verified.'),
+        if (error != null) Text(error!),
+        FilledButton(
+            onPressed: busy ? null : validateSession,
+            child: const Text('Retry secure session')),
+        TextButton(
+            onPressed: () => run(logout), child: const Text('Back to sign in')),
+      ]));
     }
     final mfa = client.auth.currentSession != null && !recovery;
     return EntryFrame(
@@ -527,6 +661,7 @@ class _AuthGateState extends State<AuthGate> {
                           notice =
                               'Check your email for a password reset link.';
                         } else {
+                          signingOut = false;
                           await client.auth.signInWithPassword(
                               email: email.text.trim(),
                               password: password.text);
@@ -550,8 +685,7 @@ class _AuthGateState extends State<AuthGate> {
                   : () {
                       if (mfa || recovery) {
                         run(() async {
-                          await client.auth.signOut(scope: SignOutScope.local);
-                          recovery = false;
+                          await logout();
                         });
                       } else {
                         setState(() {
@@ -568,7 +702,7 @@ class _AuthGateState extends State<AuthGate> {
                       : 'Forgot password?')),
           const SizedBox(height: 22),
           const Text(
-              'Your session stays in memory. Closing or reloading this page requires signing in again.',
+              'This browser remembers your MFA-verified sign-in until you sign out or the session is revoked or expires. Financial data is never stored offline. Use a trusted device.',
               style: TextStyle(fontSize: 12, color: muted)),
         ])));
   }
@@ -619,14 +753,16 @@ class _LedgerShellState extends State<LedgerShell> {
     'Accounts',
     'Transactions',
     'Budgets',
-    'Import & export'
+    'Import & export',
+    'Budgeteer'
   ];
   static const icons = [
     Icons.grid_view_outlined,
     Icons.account_balance_outlined,
     Icons.swap_vert,
     Icons.pie_chart_outline,
-    Icons.file_upload_outlined
+    Icons.file_upload_outlined,
+    Icons.view_agenda_outlined
   ];
   LedgerRepository get repo => widget.repository;
   bool get bankLinkingEnabled =>
@@ -883,7 +1019,8 @@ class _LedgerShellState extends State<LedgerShell> {
                                               'A clear view of what you hold and owe.',
                                               'Every movement, in context.',
                                               'Give your spending a little direction.',
-                                              'Bring your history. Keep control of your data.'
+                                              'Bring your history. Keep control of your data.',
+                                              'Shape your deposits into a plan.'
                                             ][page],
                                             style:
                                                 const TextStyle(color: muted))
@@ -899,7 +1036,10 @@ class _LedgerShellState extends State<LedgerShell> {
                                             onPressed: loading ? null : load,
                                             tooltip: 'Refresh data',
                                             icon: const Icon(Icons.refresh)),
-                                        if (page == 0 || page == 2 || page == 3)
+                                        if (page == 0 ||
+                                            page == 2 ||
+                                            page == 3 ||
+                                            page == 5)
                                           monthPicker()
                                       ]),
                                 ]),
@@ -932,7 +1072,12 @@ class _LedgerShellState extends State<LedgerShell> {
                                 1 => accountsPage(),
                                 2 => transactionsPage(),
                                 3 => budgetsPage(),
-                                _ => importsPage()
+                                4 => importsPage(),
+                                _ => BudgeteerPage(
+                                    key: ValueKey(month),
+                                    repository: repo,
+                                    month: month,
+                                    transactions: transactions)
                               },
                             const SizedBox(height: 28),
                             Text(
@@ -1013,12 +1158,13 @@ class _LedgerShellState extends State<LedgerShell> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(children: [
-                        Text(metrics[i].$1,
-                            style: TextStyle(
-                                color: i == 0 ? Colors.white70 : muted,
-                                fontSize: 10,
-                                letterSpacing: 1.1)),
-                        const Spacer(),
+                        Expanded(
+                            child: Text(metrics[i].$1,
+                                style: TextStyle(
+                                    color: i == 0 ? Colors.white70 : muted,
+                                    fontSize: 10,
+                                    letterSpacing: 1.1))),
+                        const SizedBox(width: 8),
                         Icon(metrics[i].$4,
                             color: i == 0 ? Colors.white70 : teal, size: 20)
                       ]),
@@ -1280,7 +1426,7 @@ class _LedgerShellState extends State<LedgerShell> {
                                 ? null
                                 : () async {
                                     if (await confirm('Refresh balance?',
-                                        'A successful Stripe balance call is currently advertised at approximately \$0.10. The server enforces a 50-attempt monthly app cap and account cooldown. The cap does not cover charges outside this app.')) {
+                                        'A successful Stripe balance call is currently advertised at approximately \$0.10. The server enforces a 50-attempt monthly app cap. There is no app cooldown; Stripe availability limits still apply. The cap does not cover charges outside this app.')) {
                                       perform(() async {
                                         await repo.api(
                                             'accounts/${a['id']}/balance-refresh',
