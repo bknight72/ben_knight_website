@@ -128,10 +128,38 @@ Deno.test("deployment target requires authenticated exact project identity", asy
         name: settings.VERCEL_PROJECT_NAME,
         rootDirectory: "budgeting",
       });
-    await assert.rejects(() => target(settings));
-    await assert.rejects(() => target({ ...settings, VERCEL_TOKEN: "" }));
+    await assert.rejects(
+      () => target(settings),
+      /Root Directory must be empty/,
+    );
+    for (const name of Object.keys(settings)) {
+      await assert.rejects(
+        () => target({ ...settings, [name]: "" }),
+        new RegExp(`${name} is missing or malformed`),
+      );
+    }
     globalThis.fetch = async () => Response.json({ id: "prj_other" });
-    await assert.rejects(() => target(settings));
+    await assert.rejects(
+      () => target(settings),
+      /does not match VERCEL_PROJECT_ID/,
+    );
+    for (const status of [401, 403, 404, 429, 500]) {
+      globalThis.fetch = async () =>
+        new Response("synthetic-sensitive-response", { status });
+      await assert.rejects(() => target(settings), (error: Error) => {
+        assert.match(error.message, new RegExp(`HTTP ${status}`));
+        assert.ok(!error.message.includes(settings.VERCEL_TOKEN));
+        assert.ok(!error.message.includes("synthetic-sensitive-response"));
+        return true;
+      });
+    }
+    globalThis.fetch = async () => {
+      throw new Error(settings.VERCEL_TOKEN);
+    };
+    await assert.rejects(
+      () => target(settings),
+      /Cannot reach the Vercel project API/,
+    );
   } finally {
     globalThis.fetch = original;
   }

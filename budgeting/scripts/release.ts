@@ -225,31 +225,74 @@ export async function smoke(value: string, env: Settings) {
   );
 }
 
+class ReleaseTargetError extends Error {}
+
 export async function target(env: Settings) {
-  assert.match(env.VERCEL_PROJECT_ID ?? "", /^prj_[A-Za-z0-9]+$/);
-  assert.match(env.VERCEL_ORG_ID ?? "", /^(?:team_|user_)?[A-Za-z0-9]+$/);
-  assert.ok(env.VERCEL_TOKEN && !/\s/.test(env.VERCEL_TOKEN));
-  assert.ok(
-    env.VERCEL_PROJECT_NAME && /^[a-z0-9-]+$/.test(env.VERCEL_PROJECT_NAME),
-  );
-  const response = await fetch(
-    `https://api.vercel.com/v9/projects/${env.VERCEL_PROJECT_ID}?teamId=${env.VERCEL_ORG_ID}`,
-    {
-      headers: { Authorization: `Bearer ${env.VERCEL_TOKEN}` },
-      redirect: "error",
-      signal: AbortSignal.timeout(20000),
-    },
-  );
-  assert.equal(response.status, 200, "Cannot verify Vercel project");
-  const project = await response.json();
-  assert.equal(project.id, env.VERCEL_PROJECT_ID);
-  assert.equal(project.accountId, env.VERCEL_ORG_ID);
-  assert.equal(project.name, env.VERCEL_PROJECT_NAME);
+  for (
+    const [name, pattern] of [
+      ["VERCEL_PROJECT_ID", /^prj_[A-Za-z0-9]+$/],
+      ["VERCEL_ORG_ID", /^(?:team_|user_)?[A-Za-z0-9]+$/],
+      ["VERCEL_PROJECT_NAME", /^[a-z0-9-]+$/],
+      ["VERCEL_TOKEN", /^\S+$/],
+    ] as const
+  ) {
+    if (!pattern.test(env[name] ?? "")) {
+      throw new ReleaseTargetError(
+        `${name} is missing or malformed. Check the budgeting-production GitHub environment settings.`,
+      );
+    }
+  }
+  let response: Response;
+  try {
+    response = await fetch(
+      `https://api.vercel.com/v9/projects/${env.VERCEL_PROJECT_ID}?teamId=${env.VERCEL_ORG_ID}`,
+      {
+        headers: { Authorization: `Bearer ${env.VERCEL_TOKEN}` },
+        redirect: "error",
+        signal: AbortSignal.timeout(20000),
+      },
+    );
+  } catch {
+    throw new ReleaseTargetError(
+      "Cannot reach the Vercel project API. Check network/TLS connectivity and retry.",
+    );
+  }
+  if (response.status !== 200) {
+    const guidance = response.status === 401 || response.status === 403
+      ? "Check VERCEL_TOKEN validity, scope, and access to the configured account/team."
+      : response.status === 404
+      ? "Check VERCEL_PROJECT_ID and VERCEL_ORG_ID; the token must have access to that project."
+      : "Check Vercel API availability and account settings.";
+    throw new ReleaseTargetError(
+      `Vercel project lookup returned HTTP ${response.status}. ${guidance}`,
+    );
+  }
+  let project;
+  try {
+    project = await response.json();
+  } catch {
+    throw new ReleaseTargetError(
+      "Vercel project lookup returned invalid JSON.",
+    );
+  }
+  for (
+    const [field, setting] of [["id", "VERCEL_PROJECT_ID"], [
+      "accountId",
+      "VERCEL_ORG_ID",
+    ], ["name", "VERCEL_PROJECT_NAME"]] as const
+  ) {
+    if (project?.[field] !== env[setting]) {
+      throw new ReleaseTargetError(
+        `Vercel project identity does not match ${setting}. Verify the dedicated project's GitHub environment variable.`,
+      );
+    }
+  }
   // The CLI receives an artifact-only directory, not a repository checkout.
-  assert.ok(
-    !project.rootDirectory,
-    "Prebuilt project root directory must be empty",
-  );
+  if (project.rootDirectory) {
+    throw new ReleaseTargetError(
+      "Vercel Root Directory must be empty for this prebuilt pipeline. Clear it in the dedicated project's Build and Deployment settings (do not use budgeting).",
+    );
+  }
   console.log("Verified dedicated Vercel project identity.");
 }
 
@@ -279,9 +322,11 @@ if (import.meta.main) {
       default:
         throw new Error("Unknown release command");
     }
-  } catch {
+  } catch (error) {
     console.error(
-      "Release check failed. Verify configuration, project identity, artifact integrity, or readiness; values withheld.",
+      error instanceof ReleaseTargetError
+        ? `Release target check failed: ${error.message}`
+        : "Release check failed. Verify configuration, project identity, artifact integrity, or readiness; values withheld.",
     );
     Deno.exit(1);
   }
