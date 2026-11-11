@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../theme/app_theme.dart';
 import '../widgets/about_section.dart';
@@ -81,7 +81,8 @@ class _HomeScreenState extends State<HomeScreen> {
             duration: const Duration(milliseconds: 200),
             switchInCurve: Curves.easeInOut,
             switchOutCurve: Curves.easeInOut,
-            child: _menuOpen && MediaQuery.sizeOf(context).width < kMobileBreakpoint
+            child: _menuOpen &&
+                    MediaQuery.sizeOf(context).width < kMobileBreakpoint
                 ? MobileNavOverlay(
                     key: const ValueKey('mobile-menu-overlay'),
                     onClose: () => setState(() => _menuOpen = false),

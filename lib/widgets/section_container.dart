@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../theme/app_spacing.dart';
 import '../theme/app_theme.dart';
@@ -30,8 +30,8 @@ class SectionContainer extends StatelessWidget {
           constraints: const BoxConstraints(maxWidth: kMaxContentWidth),
           child: Padding(
             padding: MediaQuery.sizeOf(context).width < kMobileBreakpoint
-                ? padding.add(
-                    const EdgeInsets.symmetric(horizontal: AppSpacing.sm))
+                ? padding
+                    .add(const EdgeInsets.symmetric(horizontal: AppSpacing.sm))
                 : padding,
             child: child,
           ),

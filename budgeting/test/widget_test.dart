@@ -7,6 +7,8 @@ void main() {
       'unconfigured app shows a safe empty state, not fabricated finances',
       (tester) async {
     await tester.pumpWidget(const BudgetApp());
+    expect(tester.widget<MaterialApp>(find.byType(MaterialApp)).title,
+        "Ben's Budgeteering");
     expect(find.text('A private place for your money.'), findsOneWidget);
     expect(find.textContaining('No account or financial data'), findsOneWidget);
     expect(find.textContaining('SUPABASE_URL'), findsOneWidget);
@@ -19,7 +21,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(const BudgetApp());
-    expect(find.text('ledger'), findsOneWidget);
+    expect(find.text("Ben's Budgeteering"), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
   testWidgets('desktop entry retains the dedicated product identity',
@@ -40,7 +42,21 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(const BudgetApp());
-    expect(find.text('ledger'), findsOneWidget);
+    expect(find.text("Ben's Budgeteering"), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+  for (final width in [320.0, 360.0, 900.0]) {
+    testWidgets('full app name fits entry layout at $width', (tester) async {
+      tester.view.physicalSize = Size(width, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(const BudgetApp());
+      expect(find.text("Ben's Budgeteering"), findsOneWidget);
+      final brand = tester.getRect(find.byType(Brand));
+      expect(brand.left, greaterThanOrEqualTo(0));
+      expect(brand.right, lessThanOrEqualTo(width));
+      expect(tester.takeException(), isNull);
+    });
+  }
 }

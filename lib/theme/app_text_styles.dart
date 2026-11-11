@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// Named text styles for spots that don't map onto one of Material's default
 /// [TextTheme] slots (e.g. the duplicated card/dialog title+subtitle pair,

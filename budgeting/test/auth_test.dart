@@ -191,7 +191,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: AuthGate(client: client)));
     await tester.pumpAndSettle();
     expect(client.auth.currentSession, isNull);
-    expect(find.text('This identity is not the provisioned ledger owner.'),
+    expect(find.text('This identity is not the provisioned app owner.'),
         findsOneWidget);
     expect(calls.any((call) => call.endsWith('/accounts')), isFalse);
     await tester.pumpWidget(const SizedBox());
@@ -242,7 +242,7 @@ void main() {
         headers: {'content-type': 'application/json'}));
     await tester.pumpAndSettle();
     expect(find.byType(LedgerShell), findsNothing);
-    expect(find.text('Welcome to your ledger.'), findsOneWidget);
+    expect(find.text("Welcome to Ben's Budgeteering."), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
 
@@ -387,7 +387,7 @@ void main() {
     await tester.enterText(find.byType(TextField).last, 'synthetic-password');
     await tester.tap(find.text('Sign in'));
     await tester.pumpAndSettle();
-    expect(find.text('Your ledger starts here'), findsOneWidget);
+    expect(find.text('Your budget starts here'), findsOneWidget);
     await tester.tap(find.text('Add your first account'));
     await tester.pumpAndSettle();
     expect(find.text('Add a manual account'), findsOneWidget);
@@ -395,7 +395,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Add a manual account'), findsNothing);
     expect(find.text('TRACKED NET POSITION'), findsNothing);
-    expect(find.text('Welcome to your ledger.'), findsOneWidget);
+    expect(find.text("Welcome to Ben's Budgeteering."), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
@@ -437,7 +437,7 @@ void main() {
     await tester.enterText(find.byType(TextField).first, '123456');
     await tester.tap(find.text('Verify and continue'));
     await tester.pumpAndSettle();
-    expect(find.text('This identity is not the provisioned ledger owner.'),
+    expect(find.text('This identity is not the provisioned app owner.'),
         findsOneWidget);
     expect(calls, contains('/auth/v1/factors/factor-1/challenge'));
     expect(calls, contains('/rest/v1/rpc/is_budget_owner'));

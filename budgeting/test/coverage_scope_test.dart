@@ -17,6 +17,7 @@ void main() {
           'lib/budgeteer_domain.dart',
           'lib/config.dart',
           'lib/domain.dart',
+          'lib/financial_history_chart.dart',
           'lib/main.dart',
           'lib/platform.dart',
           'lib/platform_stub.dart',

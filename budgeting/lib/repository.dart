@@ -106,12 +106,17 @@ class LedgerRepository {
       _budgeteerRpc('budgeteer_read', {'p_month': _budgeteerMonth(month)});
 
   Future<BudgeteerState> budgeteerMutate(
-          String month, int revision, String operation, Json payload) =>
+          String month, int revision, String operation, Json payload,
+          {required int groupsRevision}) =>
       _budgeteerRpc('budgeteer_mutate', {
         'p_month': _budgeteerMonth(month),
         'p_revision': revision,
         'p_operation': operation,
-        'p_payload': payload,
+        'p_payload': {
+          ...payload,
+          'schema_version': 4,
+          'expected_groups_revision': groupsRevision,
+        },
       });
 
   String _budgeteerMonth(String month) {
@@ -127,11 +132,20 @@ class LedgerRepository {
       if (result is! Map) {
         throw const FormatException('Invalid Budgeteer response.');
       }
-      return BudgeteerState.fromJson(Map<String, dynamic>.from(result));
+      final state = BudgeteerState.fromJson(Map<String, dynamic>.from(result));
+      final month = parameters['p_month'] as String;
+      if (state.plan != null && state.plan!['month'] != month) {
+        throw const FormatException('Invalid Budgeteer response month.');
+      }
+      return state;
     } on PostgrestException catch (error) {
       if (error.message.contains('budgeteer_conflict')) {
         throw const FormatException(
-            'budgeteer_conflict: This plan or label changed elsewhere. Reload before reapplying your edit.');
+            'budgeteer_conflict: This plan or global groups changed elsewhere. Reload before reapplying your edit.');
+      }
+      if (error.message.contains('budgeteer_schema_upgrade_required') ||
+          (error.code == 'PGRST202' && error.message.contains('budgeteer_'))) {
+        throw const BudgeteerSchemaException();
       }
       throw const FormatException(
           'Budgeteer could not complete this request. Check your owner/MFA session and entry values, then retry.');

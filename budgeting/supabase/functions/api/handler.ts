@@ -354,9 +354,12 @@ export async function handle(
             "import_batches",
             "budgeteer_plans",
             "budgeteer_groups",
+            "budgeteer_group_state",
+            "budgeteer_group_positions",
             "budgeteer_entries",
             "budgeteer_labels",
             "budgeteer_entry_labels",
+            "budgeteer_legacy_entry_labels",
             "budgeteer_source_exclusions",
           ]
         ) data[table] = await db.all(table, `&owner_id=eq.${ownerId}`);

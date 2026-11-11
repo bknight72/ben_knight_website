@@ -188,11 +188,26 @@ try {
     response.request().postDataJSON().p_operation === "sources_include"
   );
   await page.getByText("Budgeteer", { exact: true }).click();
-  await page.getByText("Give every dollar a place.", { exact: false }).first()
-    .waitFor();
   const included = await includedSources;
   assert.equal(included.status(), 200, "Default transaction inclusion failed");
   const initialPlan = await included.json();
+  assert.equal(initialPlan.schema_version, 4);
+  assert.equal(typeof initialPlan.groups_revision, "number");
+  assert.equal(
+    included.request().postDataJSON().p_payload.schema_version,
+    4,
+  );
+  assert.equal(
+    typeof included.request().postDataJSON().p_payload.expected_groups_revision,
+    "number",
+  );
+  await page.getByText("Withdrawals", { exact: true }).click();
+  await page.getByText("Groups are shared across all months.", { exact: false })
+    .waitFor();
+  assert.equal(
+    await page.getByText("Copy earlier groups", { exact: true }).count(),
+    0,
+  );
   let automaticEntry = initialPlan.entries.find((entry) =>
     entry.source_transaction_id != null
   );
@@ -249,6 +264,7 @@ try {
     "Restoring excluded sources failed",
   );
   assert.equal(restoredPlan.excluded_source_count, 0);
+  await page.getByText("Deposits", { exact: true }).click();
   await click("Add deposit");
   await fill("Name", "Browser Budgeteer funding");
   await fill("Amount (USD)", "1200.00");
@@ -459,8 +475,9 @@ try {
     return { key, session: JSON.parse(localStorage.getItem(key)) };
   });
   await page.getByText("Sign out", { exact: true }).click();
-  await page.getByText("Welcome to your ledger.", { exact: true }).waitFor();
-  await otherTab.getByText("Welcome to your ledger.", { exact: true })
+  await page.getByText("Welcome to Ben's Budgeteering.", { exact: true })
+    .waitFor();
+  await otherTab.getByText("Welcome to Ben's Budgeteering.", { exact: true })
     .waitFor({ timeout: 30000 });
   await otherTab.close();
   assert.equal(
@@ -472,7 +489,8 @@ try {
   assert.deepEqual(await page.evaluate(() => Object.keys(localStorage)), []);
   await page.reload({ waitUntil: "networkidle" });
   await semantics();
-  await page.getByText("Welcome to your ledger.", { exact: true }).waitFor();
+  await page.getByText("Welcome to Ben's Budgeteering.", { exact: true })
+    .waitFor();
   await page.evaluate(({ key, session }) => {
     const segments = session.access_token.split(".");
     const claims = JSON.parse(
@@ -489,7 +507,8 @@ try {
   }, rememberedSession);
   await page.reload({ waitUntil: "networkidle" });
   await semantics();
-  await page.getByText("Welcome to your ledger.", { exact: true }).waitFor();
+  await page.getByText("Welcome to Ben's Budgeteering.", { exact: true })
+    .waitFor();
   assert.deepEqual(await page.evaluate(() => Object.keys(localStorage)), []);
   assert.equal(
     await page.getByText("Synthetic local cash", { exact: false }).count(),

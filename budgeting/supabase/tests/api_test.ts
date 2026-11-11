@@ -128,7 +128,7 @@ Deno.test("API owner and aal2 required after verified GoTrue identity", async ()
   }
   equal(denied, true);
 });
-Deno.test("portable export includes owner-scoped source exclusions and unchanged financial tables", async () => {
+Deno.test("portable export enumerates all owner-scoped financial and global group tables", async () => {
   const db = new MockDB();
   const tables: string[] = [];
   const exclusion = {
@@ -137,16 +137,55 @@ Deno.test("portable export includes owner-scoped source exclusions and unchanged
     month: "2026-11-01",
     source_transaction_id: "20000000-0000-4000-8000-000000000001",
   };
+  const archivedLink = {
+    id: "70000000-0000-4000-8000-000000000001",
+    owner_id: owner,
+    plan_id: "30000000-0000-4000-8000-000000000001",
+    entry_id: "50000000-0000-4000-8000-000000000001",
+    label_id: "60000000-0000-4000-8000-000000000001",
+    entry_snapshot: { name: "Deleted synthetic withdrawal", amount_minor: 123 },
+  };
+  const depositGroup = {
+    id: "40000000-0000-4000-8000-000000000001",
+    owner_id: owner,
+    kind: "deposit",
+    parent_group_id: null,
+    name: "Synthetic salary",
+    color_key: "hex_a1b2c3",
+    sort_position: 0,
+  };
+  const groupState = { owner_id: owner, revision: 7 };
+  const groupPosition = {
+    owner_id: owner,
+    plan_id: "30000000-0000-4000-8000-000000000001",
+    group_id: depositGroup.id,
+    sort_position: 2,
+  };
   db.all = async (table, query) => {
     equal(query, `&owner_id=eq.${owner}`);
     tables.push(table);
-    return table === "budgeteer_source_exclusions" ? [exclusion] : [];
+    return table === "budgeteer_source_exclusions"
+      ? [exclusion]
+      : table === "budgeteer_legacy_entry_labels"
+      ? [archivedLink]
+      : table === "budgeteer_groups"
+      ? [depositGroup]
+      : table === "budgeteer_group_state"
+      ? [groupState]
+      : table === "budgeteer_group_positions"
+      ? [groupPosition]
+      : [];
   };
   const response = await handle(request("/api/v1/export"), db);
   equal(response.status, 200);
+  equal(response.headers.get("cache-control"), "no-store");
   const data = await response.json();
   equal(data.version, 1);
   equal(data.budgeteer_source_exclusions, [exclusion]);
+  equal(data.budgeteer_legacy_entry_labels, [archivedLink]);
+  equal(data.budgeteer_groups, [depositGroup]);
+  equal(data.budgeteer_group_state, [groupState]);
+  equal(data.budgeteer_group_positions, [groupPosition]);
   equal(tables, [
     "profiles",
     "accounts",
@@ -158,13 +197,61 @@ Deno.test("portable export includes owner-scoped source exclusions and unchanged
     "import_batches",
     "budgeteer_plans",
     "budgeteer_groups",
+    "budgeteer_group_state",
+    "budgeteer_group_positions",
     "budgeteer_entries",
     "budgeteer_labels",
     "budgeteer_entry_labels",
+    "budgeteer_legacy_entry_labels",
     "budgeteer_source_exclusions",
   ]);
   const schema =
     await (await handle(request("/openapi.json", undefined, false), db)).json();
+  equal(
+    schema.components.schemas.BudgeteerState.properties.schema_version.enum,
+    [4],
+  );
+  equal(schema.components.schemas.BudgeteerGroup.properties.kind.enum, [
+    "deposit",
+    "withdrawal",
+  ]);
+  equal(
+    schema.components.schemas.BudgeteerGroup.properties.kind.default,
+    "withdrawal",
+  );
+  equal(
+    schema.components.schemas.BudgeteerGroup.required.includes("kind"),
+    true,
+  );
+  const payload =
+    schema.components.schemas.BudgeteerMutation.properties.p_payload;
+  equal(payload.required, ["schema_version", "expected_groups_revision"]);
+  equal(payload.properties.schema_version.enum, [4]);
+  equal(payload.example.schema_version, 4);
+  equal(payload.example.expected_groups_revision, 0);
+  equal(payload.properties.expected_groups_revision.minimum, 0);
+  const state = schema.components.schemas.BudgeteerState;
+  equal(state.required.includes("owner_id"), true);
+  equal(state.required.includes("groups_revision"), true);
+  equal(state.properties.groups_revision.minimum, 0);
+  equal("group_copy_preview" in state.properties, false);
+  equal(
+    "plan_id" in schema.components.schemas.BudgeteerGroup.properties,
+    false,
+  );
+  equal("source_plan_id" in payload.properties, false);
+  equal("source_revision" in payload.properties, false);
+  equal(
+    schema.components.schemas.BudgeteerMutation.properties.p_operation.enum
+      .includes("groups_copy"),
+    false,
+  );
+  equal(
+    payload.properties.entries.items.properties.group_id.description.includes(
+      "Same-kind",
+    ),
+    true,
+  );
   equal(
     schema.components.schemas.BudgeteerState.properties.excluded_source_count
       .minimum,
@@ -186,6 +273,87 @@ Deno.test("portable export includes owner-scoped source exclusions and unchanged
       .items.$ref,
     "#/components/schemas/BudgeteerSourceExclusion",
   );
+  const exportSchema = schema.paths["/api/v1/export"].get.responses["200"]
+    .content["application/json"].schema;
+  equal(
+    Object.keys(exportSchema.properties).sort(),
+    [
+      "version",
+      "currency",
+      "exportedAt",
+      ...tables,
+    ].sort(),
+  );
+  equal(
+    exportSchema.properties.budgeteer_group_state.items.$ref,
+    "#/components/schemas/BudgeteerGroupState",
+  );
+  equal(
+    exportSchema.properties.budgeteer_group_positions.items.$ref,
+    "#/components/schemas/BudgeteerGroupPosition",
+  );
+});
+Deno.test("export pagination uses real singleton and composite keys and preserves owner filters", async () => {
+  for (
+    const [table, order] of [
+      ["budgeteer_group_state", "owner_id"],
+      ["budgeteer_group_positions", "plan_id,group_id"],
+      ["budgeteer_groups", "id"],
+      ["budgeteer_entry_labels", "entry_id,label_id"],
+      ["transaction_annotations", "transaction_id"],
+      ["profiles", "owner_id"],
+    ]
+  ) {
+    const db = new MockDB();
+    const paths: string[] = [];
+    db.call = async (path: string) => {
+      paths.push(path);
+      return paths.length === 1
+        ? Array.from({ length: 1000 }, (_, index) => ({ index }))
+        : [{ index: 1000 }];
+    };
+    const rows = await db.all(table, `&owner_id=eq.${owner}`);
+    equal(rows.length, 1001);
+    equal(rows.at(-1), { index: 1000 });
+    equal(
+      paths,
+      [0, 1000].map((offset) =>
+        `${table}?select=*&order=${order}&limit=1000&offset=${offset}&owner_id=eq.${owner}`
+      ),
+    );
+  }
+});
+Deno.test("export denies unverified, non-owner and non-MFA sessions before table reads", async () => {
+  for (
+    const [aal, sub, verifiedId, verifiedStatus, expected] of [
+      ["aal1", owner, owner, 200, 403],
+      ["aal2", account, owner, 200, 403],
+      ["aal2", owner, account, 200, 403],
+      ["aal2", owner, owner, 401, 401],
+    ] as const
+  ) {
+    const db = new MockDB();
+    db.fetcher = async () =>
+      new Response(JSON.stringify({ id: verifiedId }), {
+        status: verifiedStatus,
+      });
+    let reads = 0;
+    db.all = async () => {
+      reads++;
+      return [];
+    };
+    const response = await handle(
+      new Request(
+        "https://example.test/functions/v1/api/api/v1/export",
+        { headers: { Authorization: `Bearer ${token(aal, sub)}` } },
+      ),
+      db,
+    );
+    equal(response.status, expected);
+    equal(reads, 0);
+    equal(response.headers.get("cache-control"), "no-store");
+    equal("budgeteer_groups" in await response.json(), false);
+  }
 });
 Deno.test("commit revalidates CSV, requires overlap confirmation, rejects provider overlap", async () => {
   const db = new MockDB();

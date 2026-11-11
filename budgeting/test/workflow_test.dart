@@ -10,7 +10,7 @@ import 'support.dart';
 
 void main() {
   testWidgets(
-      'owner workflow creates account, snapshot, annotations, budgets and export',
+      'owner workflow creates account, snapshot, annotations, groups and export',
       (tester) async {
     tester.view.physicalSize = const Size(1440, 1200);
     tester.view.devicePixelRatio = 1;
@@ -22,7 +22,17 @@ void main() {
     final categories = <Map<String, dynamic>>[
       {'id': 'cat', 'name': 'Groceries', 'kind': 'expense'}
     ];
-    final budgets = <Map<String, dynamic>>[];
+    final budgets = <Map<String, dynamic>>[
+      {
+        'id': 'budget',
+        'category_id': 'cat',
+        'month': '2026-11-01',
+        'amount_minor': 40000
+      }
+    ];
+    final groups = <Map<String, dynamic>>[];
+    var groupsRevision = 7;
+    var groupReads = 0;
     final annotations = <Map<String, dynamic>>[];
     final client = SupabaseClient('https://example.supabase.co', 'public-key',
         isolate: TestJsonIsolate(),
@@ -34,6 +44,42 @@ void main() {
         result = session('aal2');
       } else if (path.endsWith('/is_budget_owner')) {
         result = true;
+      } else if (path.endsWith('/budgeteer_read') ||
+          path.endsWith('/budgeteer_mutate')) {
+        if (path.endsWith('/budgeteer_read')) {
+          groupReads++;
+        } else {
+          writes.add(request);
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          expect(body['p_operation'], 'group_save');
+          expect(body['p_revision'], 0);
+          final payload = body['p_payload'] as Map<String, dynamic>;
+          expect(payload['schema_version'], 4);
+          expect(payload['expected_groups_revision'], groupsRevision);
+          expect(payload.containsKey('parent_group_id'), isTrue);
+          if (payload['id'] == null) {
+            groups.add({
+              'id': 'group-${groups.length}',
+              'owner_id': 'owner',
+              'sort_position': groups.length,
+              ...payload,
+            });
+          } else {
+            groups.singleWhere((g) => g['id'] == payload['id']).addAll(payload);
+          }
+          groupsRevision++;
+        }
+        result = {
+          'schema_version': 4,
+          'owner_id': 'owner',
+          'groups_revision': groupsRevision,
+          'plan': null,
+          'groups': groups,
+          'entries': [],
+          'legacy_labels': [],
+          'legacy_entry_labels': [],
+          'excluded_source_count': 0,
+        };
       } else if (path.endsWith('/usage')) {
         result = {
           'month': '2026-11',
@@ -124,34 +170,45 @@ void main() {
     await tester.pumpAndSettle();
     expect(annotations.single['note'], 'Synthetic note');
     expect(annotations.single['is_card_payment'], true);
-    await tester.tap(find.text('Budgets'));
+    await tester.tap(find.text('Group manager'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Set category budget'));
+    expect(groupReads, 1);
+    expect(
+        writes.where((r) => r.url.path.endsWith('/budgeteer_mutate')), isEmpty);
+    expect(find.text('Add category'), findsNothing);
+    expect(find.text('Set category budget'), findsNothing);
+    await tester.tap(find.text('Add deposit group'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).first, '400.00');
-    await tester.tap(find.text('Save'));
+    await tester.enterText(find.byType(TextField).first, 'Paychecks');
+    await tester.tap(find.text('Save deposit group'));
     await tester.pumpAndSettle();
-    expect(budgets.single['amount_minor'], 40000);
-    await tester.tap(find.text('Add category'));
+    expect(groups.single['kind'], 'deposit');
+    expect(groups.single['parent_group_id'], isNull);
+    expect(find.text('Paychecks'), findsOneWidget);
+    await tester.tap(find.text('Add withdrawal group'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, 'Travel');
-    await tester.tap(find.text('Save'));
+    await tester.tap(find.text('Save group'));
     await tester.pumpAndSettle();
-    expect(categories.any((c) => c['name'] == 'Travel'), true);
-    await tester.tap(find.text('Rename').first);
+    expect(groups.last['kind'], 'withdrawal');
+    expect(groups.last['name'], 'Travel');
+    await tester.tap(find.byTooltip('Edit group Travel'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, 'Food');
-    await tester.tap(find.text('Save'));
+    await tester.tap(find.text('Save group'));
     await tester.pumpAndSettle();
-    expect(categories.first['name'], 'Food');
-    await tester.tap(find.byTooltip('Reporting settings'));
+    expect(groups.last['name'], 'Food');
+    expect(find.text('Food'), findsOneWidget);
+    expect(categories.single['name'], 'Groceries');
+    expect(budgets.single['amount_minor'], 40000);
+    expect(
+        writes.where((r) =>
+            r.url.path.endsWith('/categories') ||
+            r.url.path.endsWith('/monthly_budgets')),
+        isEmpty);
+    await tester.tap(find.text('Overview'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Save'));
-    await tester.pumpAndSettle();
-    if (find.byType(AlertDialog).evaluate().isNotEmpty) {
-      await tester.tap(find.text('Cancel'));
-      await tester.pumpAndSettle();
-    }
+    expect(find.byTooltip('Reporting settings'), findsNothing);
     await tester.tap(find.text('Import & export'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Export JSON'));
@@ -160,10 +217,11 @@ void main() {
     await tester.tap(find.text('Confirm'));
     await tester.pumpAndSettle();
     expect(find.text('Export downloaded. Keep it private.'), findsOneWidget);
-    expect(writes.length, greaterThanOrEqualTo(7));
+    expect(writes.length, 6);
+    expect(writes.where((r) => r.url.path.endsWith('/profiles')), isEmpty);
     await tester.tap(find.text('Sign out'));
     await tester.pumpAndSettle();
-    expect(find.text('Welcome to your ledger.'), findsOneWidget);
+    expect(find.text("Welcome to Ben's Budgeteering."), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });

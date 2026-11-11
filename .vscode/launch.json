@@ -5,6 +5,20 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Budgeting (Docker, Real Backend)",
+      "type": "pwa-chrome",
+      "request": "launch",
+      "url": "http://localhost:8180",
+      "webRoot": "${workspaceFolder}/budgeting/web",
+      "resolveSourceMapLocations": [
+        "**",
+        "!http://localhost:8180/flutter.js.map"
+      ],
+      "preLaunchTask": "Budgeting: Start Development Server",
+      "postDebugTask": "Budgeting: Stop Development Server",
+      "timeout": 120000
+    },
+    {
       "name": "ben_knight_website2 (Chrome, Debug)",
       "request": "launch",
       "type": "dart",

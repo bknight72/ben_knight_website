@@ -1,0 +1,49 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Budgeting: Start Development Server",
+      "type": "process",
+      "command": "sh",
+      "args": ["${workspaceFolder}/budgeting/scripts/dev.sh", "start"],
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "budgeting-dev",
+        "pattern": {
+          "regexp": "^(.+):(\\d+): (.+)$",
+          "file": 1,
+          "line": 2,
+          "message": 3
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^BUDGETING_DEV_STARTING$",
+          "endsPattern": "^BUDGETING_DEV_READY http://localhost:8180$"
+        }
+      },
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "runOptions": { "instanceLimit": 1 }
+    },
+    {
+      "label": "Budgeting: Reload UI",
+      "type": "process",
+      "command": "sh",
+      "args": ["${workspaceFolder}/budgeting/scripts/dev.sh", "reload"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Budgeting: Restart UI",
+      "type": "process",
+      "command": "sh",
+      "args": ["${workspaceFolder}/budgeting/scripts/dev.sh", "restart"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Budgeting: Stop Development Server",
+      "type": "process",
+      "command": "sh",
+      "args": ["${workspaceFolder}/budgeting/scripts/dev.sh", "stop"],
+      "problemMatcher": []
+    }
+  ]
+}

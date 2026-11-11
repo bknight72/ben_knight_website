@@ -13,21 +13,36 @@ for migration in supabase/migrations/*.sql; do
   if [ "$(basename "$migration")" = 202611100001_stripe_linking_lifecycle.sql ]; then
     docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/linking_upgrade_fixture.sql
   fi
+  if [ "$(basename "$migration")" = 202611110001_budgeteer_hierarchy.sql ]; then
+    docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/linking_upgrade_assert.sql
+    docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/budgeteer.sql
+    docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/budgeteer_concurrency.sql
+    docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/budgeteer_hierarchy_fixture.sql
+  fi
+  if [ "$(basename "$migration")" = 202611110002_budgeteer_deposit_groups.sql ]; then
+    docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/budgeteer_hierarchy.sql
+    docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/budgeteer_hierarchy_concurrency.sql
+    docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/budgeteer_deposit_fixture.sql
+  fi
+  if [ "$(basename "$migration")" = 202611110003_budgeteer_global_groups.sql ]; then
+    docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/budgeteer_deposit_groups.sql
+    docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/budgeteer_deposit_concurrency.sql
+    docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/budgeteer_global_fixture.sql
+  fi
   docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f "/tests/migrations/$(basename "$migration")"
 done
-docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/linking_upgrade_assert.sql
+docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/budgeteer_global_groups.sql
+docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/budgeteer_global_concurrency.sql
 docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/authorization.sql
 docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/concurrency.sql
 docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/usage_and_leases.sql
 docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/linking_lifecycle.sql
 docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/linking_concurrency.sql
-docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/budgeteer.sql
-docker exec "$name" psql -U postgres -v ON_ERROR_STOP=1 -f /tests/tests/budgeteer_concurrency.sql
 # A second empty database verifies clean initialization independently of populated upgrade.
 docker exec "$name" createdb -U postgres fresh
 docker exec "$name" psql -U postgres -d fresh -v ON_ERROR_STOP=1 -f /tests/tests/bootstrap.sql
 for migration in supabase/migrations/*.sql; do
   docker exec "$name" psql -U postgres -d fresh -v ON_ERROR_STOP=1 -f "/tests/migrations/$(basename "$migration")"
 done
+docker exec "$name" psql -U postgres -d fresh -v ON_ERROR_STOP=1 -f /tests/tests/budgeteer_global_empty.sql
 docker exec "$name" psql -U postgres -d fresh -v ON_ERROR_STOP=1 -f /tests/tests/linking_lifecycle.sql
-docker exec "$name" psql -U postgres -d fresh -v ON_ERROR_STOP=1 -f /tests/tests/budgeteer.sql

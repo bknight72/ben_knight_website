@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// Centralizes shape/border tokens that aren't natively covered by
 /// [ThemeData] (e.g. [ButtonStyle.shape], the project card's hairline

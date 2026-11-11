@@ -2,7 +2,7 @@
 
 ben knight web site
 
-The independent private budgeting app has its own [setup, validation, deployment, and recovery guide](budgeting/README.md). It does not change the portfolio deployment.
+Ben's Budgeteering, the independent private budgeting app, has its own [setup, validation, deployment, and recovery guide](budgeting/README.md). It does not change the portfolio deployment.
 
 ## Getting Started
 

@@ -84,6 +84,25 @@ void main() {
           ]),
           -600);
     });
+    test('source-specific credit balances preserve debt and overpayments', () {
+      for (final kind in ['cash', 'credit']) {
+        for (final balance in [-100000, 0, 100000]) {
+          final account = {'kind': kind, 'source': 'stripe'};
+          expect(accountBalance(account, {'current_minor': balance}),
+              kind == 'credit' ? -balance : balance);
+          expect(
+              accountBalance(
+                  account, {'current_minor': balance, 'source': 'manual'}),
+              balance);
+        }
+      }
+      expect(
+          netPosition([
+            {'kind': 'cash', 'balance_minor': 20000},
+            {'kind': 'credit', 'balance_minor': 100000},
+          ]),
+          -80000);
+    });
     test('posted only, excludes both sides of transfers and card payments', () {
       final summary = LedgerSummary.calculate([
         tx(100000),
@@ -140,6 +159,228 @@ void main() {
       expect(summary.income, 8000);
       expect(summary.spending, 0);
       expect(summary.categories, isEmpty);
+    });
+  });
+  group('Monthly financial history', () {
+    Json account(String id, String kind) => {'id': id, 'kind': kind};
+    Json snapshot(String accountId, int? balance, String observed,
+            {String id = 'snapshot'}) =>
+        {
+          'id': id,
+          'account_id': accountId,
+          'current_minor': balance,
+          'observed_at': observed,
+        };
+    Json expense(int amount, String date, {String status = 'posted'}) => {
+          'amount_minor': amount,
+          'transaction_date': date,
+          'category_kind': 'expense',
+          'status': status,
+        };
+
+    test('starts in October Denver, labels current month, crosses years', () {
+      expect(
+          financialHistory([], [], [], now: DateTime.utc(2026, 10, 1, 5, 59)),
+          isEmpty);
+      final first =
+          financialHistory([], [], [], now: DateTime.utc(2026, 10, 1, 6));
+      expect(first.single.month, '2026-10');
+      expect(first.single.label, '2026-10 (so far)');
+      expect(first.single.isCurrent, isTrue);
+      final history =
+          financialHistory([], [], [], now: DateTime.utc(2027, 1, 1, 7));
+      expect(history.map((row) => row.month),
+          ['2026-10', '2026-11', '2026-12', '2027-01']);
+      expect(history.first.label, '2026-10');
+      expect(history.first.isCurrent, isFalse);
+      expect(history.last.label, '2027-01 (so far)');
+      expect(history.every((row) => row.netWorth == null), isTrue);
+      expect(history.every((row) => row.totalDebt == null), isTrue);
+      expect(history.first.accountCount, 0);
+      expect(history.first.oldestObservation, isNull);
+    });
+
+    test('uses strict Denver month boundaries and inclusive current instant',
+        () {
+      final now = DateTime.utc(2026, 12, 5, 12);
+      final history = financialHistory([
+        account('cash', 'cash'),
+      ], [
+        snapshot('cash', 100, '2026-11-01T05:59:59.999999Z'),
+        snapshot('cash', 200, '2026-11-01T06:00:00Z'),
+        snapshot('cash', 300, '2026-12-01T06:59:59.999999Z'),
+        snapshot('cash', 400, '2026-12-01T07:00:00Z'),
+        snapshot('cash', 500, now.toIso8601String()),
+        snapshot('cash', 900, '2026-12-05T12:00:00.000001Z'),
+      ], [], now: now);
+      expect(history.map((row) => row.netWorth), [100, 300, 500]);
+      expect(history.last.observations['cash'], now);
+      expect(history.every((row) => row.totalDebt == 0), isTrue);
+    });
+
+    test('compares offset timestamps as instants across DST and stable ties',
+        () {
+      final snapshots = [
+        snapshot('card', 50, '2026-11-01T01:50:00-06:00', id: 'early'),
+        snapshot('card', 200, '2026-11-01T01:10:00-07:00', id: 'b'),
+        snapshot('card', 100, '2026-11-01T08:10:00Z', id: 'a'),
+        snapshot('card', 400, '2026-11-01T08:10:00Z', id: 'b'),
+      ];
+      final accounts = [account('card', 'credit')];
+      for (final input in [snapshots, snapshots.reversed.toList()]) {
+        final history = financialHistory(accounts, input, [],
+            now: DateTime.utc(2026, 11, 1, 8, 10));
+        expect(history.first.totalDebt, isNull);
+        expect(history.last.totalDebt, 400);
+        expect(history.last.netWorth, -400);
+        expect(
+            history.last.oldestObservation, DateTime.utc(2026, 11, 1, 8, 10));
+      }
+    });
+
+    test('missing cash does not hide known credit debt; coverage is explicit',
+        () {
+      final history = financialHistory([
+        {...account('cash', 'cash'), 'created_at': '2026-11-10T00:00:00Z'},
+        account('card', 'credit'),
+      ], [
+        snapshot('card', 250, '2026-09-20T12:00:00Z'),
+        snapshot('cash', 500, '2026-11-05T12:00:00Z'),
+        snapshot('deleted', 999999, '2026-09-20T12:00:00Z'),
+      ], [], now: DateTime.utc(2026, 11, 11));
+      final october = history.first;
+      expect(october.netWorth, isNull);
+      expect(october.totalDebt, 250);
+      expect(october.accountCount, 2);
+      expect(october.observedAccountCount, 1);
+      expect(october.creditAccountCount, 1);
+      expect(october.observedCreditAccountCount, 1);
+      expect(october.carriedForwardAccountCount, 1);
+      expect(october.oldestObservation, DateTime.utc(2026, 9, 20, 12));
+      expect(october.oldestCreditObservation, october.oldestObservation);
+      expect(history.last.netWorth, 250);
+      expect(history.last.observedAccountCount, 2);
+      expect(history.last.carriedForwardAccountCount, 1);
+      expect(() => october.observations.clear(), throwsUnsupportedError);
+    });
+
+    test('missing credit gaps both balances; no credit is zero debt only', () {
+      final now = DateTime.utc(2026, 11, 10);
+      final snapshots = [snapshot('cash', 0, '2026-10-01T00:00:00Z')];
+      final missingCredit = financialHistory(
+              [
+                account('cash', 'cash'),
+                account('card', 'credit'),
+              ],
+              snapshots,
+              [],
+              now: now)
+          .first;
+      expect(missingCredit.netWorth, isNull);
+      expect(missingCredit.totalDebt, isNull);
+      expect(missingCredit.observedCreditAccountCount, 0);
+      expect(missingCredit.oldestCreditObservation, isNull);
+      final cashOnly =
+          financialHistory([account('cash', 'cash')], snapshots, [], now: now)
+              .first;
+      expect(cashOnly.netWorth, 0);
+      expect(cashOnly.totalDebt, 0);
+      final noSnapshots =
+          financialHistory([account('cash', 'cash')], [], [], now: now).first;
+      expect(noSnapshots.netWorth, isNull);
+      expect(noSnapshots.totalDebt, 0);
+    });
+
+    test(
+        'signed cash and overpaid credit affect net worth, never negative debt',
+        () {
+      final history = financialHistory([
+        {'id': 'cash', 'type': 'cash'},
+        {'id': 'overpaid', 'type': 'credit'},
+        {'id': 'debt', 'type': 'credit'},
+      ], [
+        snapshot('cash', -1000, '2026-10-20T00:00:00Z'),
+        snapshot('overpaid', -300, '2026-10-21T00:00:00Z'),
+        snapshot('debt', 500, '2026-10-22T00:00:00Z'),
+      ], [], now: DateTime.utc(2026, 11, 11));
+      expect(history.first.netWorth, -1200);
+      expect(history.first.totalDebt, 500);
+      expect(history.first.oldestObservation, DateTime.utc(2026, 10, 20));
+      expect(history.first.oldestCreditObservation, DateTime.utc(2026, 10, 21));
+    });
+
+    test('Stripe debt and overpayments use source-aware historical balances',
+        () {
+      final accounts = [
+        {'id': 'cash', 'kind': 'cash', 'source': 'stripe'},
+        {'id': 'card', 'kind': 'credit', 'source': 'stripe'},
+      ];
+      final history = financialHistory(
+          accounts,
+          [
+            snapshot('cash', 20000, '2026-10-20T00:00:00Z'),
+            snapshot('card', -100000, '2026-10-20T00:00:00Z'),
+            {
+              ...snapshot('card', 300, '2026-11-01T12:00:00Z'),
+              'source': 'stripe',
+            },
+          ],
+          [],
+          now: DateTime.utc(2026, 11, 11));
+      expect(history.first.netWorth, -80000);
+      expect(history.first.totalDebt, 100000);
+      expect(history.last.netWorth, 20300);
+      expect(history.last.totalDebt, 0);
+      final manualOverride = financialHistory(
+              accounts,
+              [
+                snapshot('cash', -1000, '2026-10-20T00:00:00Z'),
+                {
+                  ...snapshot('card', 500, '2026-10-20T00:00:00Z'),
+                  'source': 'manual',
+                },
+              ],
+              [],
+              now: DateTime.utc(2026, 11, 11))
+          .first;
+      expect(manualOverride.netWorth, -1500);
+      expect(manualOverride.totalDebt, 500);
+    });
+
+    test('invalid, ambiguous, null and future observations cannot fill gaps',
+        () {
+      final history = financialHistory([
+        account('cash', 'cash'),
+      ], [
+        snapshot('cash', 100, 'invalid'),
+        snapshot('cash', 100, '2026-10-01T12:00:00'),
+        snapshot('cash', null, '2026-10-01T12:00:00Z'),
+        snapshot('cash', 100, '2026-11-12T12:00:00Z'),
+      ], [], now: DateTime.utc(2026, 11, 11));
+      expect(history.every((row) => row.netWorth == null), isTrue);
+      expect(history.every((row) => row.observations.isEmpty), isTrue);
+    });
+
+    test('spending reuses ledger exclusions and cuts off at Denver today', () {
+      final history = financialHistory([], [], [
+        expense(-100, '2026-10-31'),
+        expense(-200, '2026-11-10'),
+        expense(700, '2026-11-10'),
+        expense(-9999, '2026-11-11'),
+        expense(-9999, '2026-11-10', status: 'pending'),
+        {...expense(-9999, '2026-11-10'), 'is_transfer': true},
+        {...expense(-9999, '2026-11-10'), 'is_card_payment': true},
+        {...expense(-9999, '2026-11-10'), 'excluded_from_budget': true},
+        {...expense(-9999, '2026-11-10'), 'category_kind': 'income'},
+        {...expense(-9999, '2026-11-10'), 'posted_date': '2026-11-11'},
+        {...expense(-50, '2026-11-11'), 'posted_date': '2026-11-10'},
+      ], now: DateTime.utc(2026, 11, 11, 6, 59));
+      expect(history.first.spending, 100);
+      expect(history.last.spending, -450);
+      final nextDay = financialHistory([], [], [
+        expense(-100, '2026-11-11'),
+      ], now: DateTime.utc(2026, 11, 11, 7));
+      expect(nextDay.last.spending, 100);
     });
   });
   group('CSV structure validation', () {

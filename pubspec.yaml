@@ -43,6 +43,7 @@ dependencies:
   # Used to apply the DM Mono Google Font across the app's TextTheme.
   google_fonts: ^8.2.1
 
+  material_ui: any
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_budgeting/app.dart';
+import 'package:private_budgeting/budgeteer_domain.dart';
 import 'package:private_budgeting/domain.dart';
+import 'package:private_budgeting/financial_history_chart.dart';
 import 'package:private_budgeting/repository.dart';
 import 'package:supabase/supabase.dart';
 import 'support.dart';
@@ -10,8 +12,12 @@ class FixtureRepository extends LedgerRepository {
   final bool empty;
   final bool fail;
   final bool stripe;
+  final bool credit;
   FixtureRepository(
-      {this.empty = false, this.fail = false, this.stripe = false})
+      {this.empty = false,
+      this.fail = false,
+      this.stripe = false,
+      this.credit = false})
       : super(SupabaseClient('https://example.supabase.co', 'test-public-key',
             isolate: TestJsonIsolate(),
             authOptions: const AuthClientOptions(autoRefreshToken: false)));
@@ -29,6 +35,9 @@ class FixtureRepository extends LedgerRepository {
               ]
             };
   @override
+  Future<BudgeteerState> budgeteerRead(String month) async =>
+      const BudgeteerState.empty();
+  @override
   Future<List<Json>> rows(String table) async {
     if (fail) throw Exception('must never display this financial content');
     if (empty) return [];
@@ -41,7 +50,14 @@ class FixtureRepository extends LedgerRepository {
             'kind': 'cash',
             'institution': 'Test bank',
             'last_four': '1234'
-          }
+          },
+          if (credit)
+            {
+              'id': 'card',
+              'name': 'Synthetic card',
+              'kind': 'credit',
+              'source': 'stripe'
+            },
         ],
       'balance_snapshots' => [
           {
@@ -49,7 +65,15 @@ class FixtureRepository extends LedgerRepository {
             'account_id': 'a',
             'current_minor': 200000,
             'observed_at': '2026-11-01T12:00:00Z'
-          }
+          },
+          if (credit)
+            {
+              'id': 'card-snapshot',
+              'account_id': 'card',
+              'current_minor': -300000,
+              'source': 'stripe',
+              'observed_at': '2026-11-01T12:00:00Z'
+            },
         ],
       'transactions' => [
           {
@@ -149,8 +173,37 @@ void main() {
       (tester) async {
     await mount(tester);
     expect(find.text('\$2,000.00'), findsWidgets);
-    expect(find.text('Synthetic checking'), findsOneWidget);
+    expect(find.text('Synthetic checking'), findsNothing);
     expect(find.text('TRACKED NET POSITION'), findsOneWidget);
+    expect(find.byType(FinancialHistoryChart), findsOneWidget);
+    expect(find.text('Spending by category'), findsNothing);
+    expect(find.text('Account coverage'), findsNothing);
+    expect(find.text('Recent activity'), findsNothing);
+    expect(find.byTooltip('Reporting settings'), findsNothing);
+    final heading = tester.widget<Text>(find.text('Overview').last);
+    expect(heading.style?.color, darkSurfaceTitle);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('negative Stripe credit is debt in overview and history',
+      (tester) async {
+    tester.view.physicalSize = const Size(1440, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repo = FixtureRepository(credit: true);
+    addTearDown(repo.client.dispose);
+    await tester.pumpWidget(MaterialApp(
+        home: LedgerShell(repository: repo, onLogout: () async {})));
+    await tester.pumpAndSettle();
+    expect(find.text('-\$1,000.00'), findsWidgets);
+    final chart = tester
+        .widget<FinancialHistoryChart>(find.byType(FinancialHistoryChart));
+    expect(chart.history.last.netWorth, -100000);
+    expect(chart.history.last.totalDebt, 300000);
+    await tester.ensureVisible(find.text('Total debt'));
+    await tester.tap(find.text('Total debt'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('\$3,000.00'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
   testWidgets('transactions search and status filter use in-memory results',
@@ -234,35 +287,43 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
-  testWidgets(
-      'category creation and budgets validate empty or malformed values',
+  testWidgets('group manager validates names without exposing category limits',
       (tester) async {
     await mount(tester);
-    await tester.tap(find.text('Budgets'));
+    await tester.tap(find.text('Group manager'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Add category'));
+    expect(find.text('Budgets'), findsNothing);
+    expect(find.text('Add category'), findsNothing);
+    expect(find.text('Set category budget'), findsNothing);
+    expect(find.text('Deposit groups'), findsOneWidget);
+    expect(find.text('Withdrawal groups'), findsOneWidget);
+    await tester.tap(find.text('Add deposit group'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Save'));
+    await tester.tap(find.text('Save deposit group'));
     await tester.pumpAndSettle();
-    expect(find.text('Enter a category name.'), findsOneWidget);
+    expect(find.text('Enter a name.'), findsOneWidget);
+    expect(find.text('Parent group'), findsNothing);
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Set category budget'));
+    await tester.tap(find.text('Add withdrawal group'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).first, '-5.00');
-    await tester.tap(find.text('Save'));
+    expect(find.text('Parent group'), findsOneWidget);
+    await tester.tap(find.text('Save group'));
     await tester.pumpAndSettle();
-    expect(find.text('Budget must be zero or positive.'), findsOneWidget);
+    expect(find.text('Enter a name.'), findsOneWidget);
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
-  testWidgets('budgets and export screens remain usable without records',
+  testWidgets('group manager and export remain usable without records',
       (tester) async {
     await mount(tester, empty: true);
-    await tester.tap(find.text('Budgets'));
+    await tester.tap(find.text('Group manager'));
     await tester.pumpAndSettle();
-    expect(find.text('Start with your categories'), findsOneWidget);
+    expect(find.text('No deposit groups yet.'), findsOneWidget);
+    expect(find.text('No withdrawal groups yet.'), findsOneWidget);
+    expect(find.text('Add deposit group'), findsOneWidget);
+    expect(find.text('Add withdrawal group'), findsOneWidget);
     await tester.tap(find.text('Import & export'));
     await tester.pumpAndSettle();
     expect(find.text('No imports yet.'), findsOneWidget);
@@ -272,12 +333,39 @@ void main() {
   testWidgets('mobile workspace navigation is drawer-based with no overflow',
       (tester) async {
     await mount(tester, mobile: true, empty: true);
-    expect(find.text('Your ledger starts here'), findsOneWidget);
+    expect(find.text('Your budget starts here'), findsOneWidget);
     await tester.tap(find.byTooltip('Open navigation menu'));
     await tester.pumpAndSettle();
+    final picker = find.byTooltip(RegExp('Choose reporting month:'));
+    expect(find.ancestor(of: picker, matching: find.byType(Drawer)),
+        findsOneWidget);
+    await tester.tap(picker);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('February'));
+    await tester.pumpAndSettle();
+    final selectedMonth = tester
+        .widget<Text>(find.descendant(
+            of: find.widgetWithIcon(
+                OutlinedButton, Icons.calendar_today_outlined),
+            matching: find.byType(Text)))
+        .data!;
+    expect(selectedMonth.endsWith('-02'), isTrue);
     await tester.tap(find.text('Accounts'));
     await tester.pumpAndSettle();
     expect(find.text('No accounts yet'), findsOneWidget);
+    expect(find.byTooltip('Refresh data'), findsNothing);
+    await tester.tap(find.byTooltip('Open navigation menu'));
+    await tester.pumpAndSettle();
+    expect(find.text(selectedMonth), findsOneWidget);
+    await tester.tap(find.text('Transactions'));
+    await tester.pumpAndSettle();
+    expect(find.text('Only $selectedMonth'), findsOneWidget);
+    await tester.tap(find.byTooltip('Open navigation menu'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Group manager'));
+    await tester.pumpAndSettle();
+    expect(find.text('No deposit groups yet.'), findsOneWidget);
+    expect(find.text('No withdrawal groups yet.'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
   testWidgets(

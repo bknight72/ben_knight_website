@@ -111,7 +111,7 @@ void main() {
   });
 
   testWidgets(
-      'pending consent resumes the same session after failure on mobile',
+      'pending connections do not render a section or retry controls on mobile',
       (tester) async {
     final repo = LinkingRepository()
       ..pending = [
@@ -123,21 +123,11 @@ void main() {
       ]
       ..completionFails = true;
     await mountLinking(tester, repo, mobile: true);
-    await tester.tap(find.text('Retry completion'));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('ongoing charges'), findsWidgets);
-    await tester.tap(find.text('Confirm'));
-    await tester.pumpAndSettle();
-    expect(find.text('Completion unavailable. Retry later.'), findsOneWidget);
-    expect(find.text('Retry completion'), findsOneWidget);
-    repo.completionFails = false;
-    await tester.tap(find.text('Retry completion'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Confirm'));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('not yet confirmed'), findsOneWidget);
+    expect(find.text('Unfinished bank connections'), findsNothing);
     expect(find.text('Retry completion'), findsNothing);
-    expect(repo.calls.where((p) => p == 'connections/complete').length, 2);
+    expect(find.textContaining('2026-11-10 / processing'), findsNothing);
+    expect(find.text('Connect bank'), findsOneWidget);
+    expect(repo.calls, isNot(contains('connections/complete')));
     expect(repo.calls, isNot(contains('connections/session')));
     expect(tester.takeException(), isNull);
   });
@@ -246,8 +236,8 @@ void main() {
             outcome == 'completed' ? 1 : 0);
         expect(find.textContaining('not yet confirmed'),
             outcome == 'completed' ? findsOneWidget : findsNothing);
-        expect(find.text('Retry completion'),
-            outcome == 'completed' ? findsNothing : findsOneWidget);
+        expect(find.text('Unfinished bank connections'), findsNothing);
+        expect(find.text('Retry completion'), findsNothing);
         expect(find.textContaining('transient-secret'), findsNothing);
         expect(tester.takeException(), isNull);
       });

@@ -1,8 +1,8 @@
-# Private Budgeting
+# Ben's Budgeteering
 
-Standalone, single-owner Flutter web budgeting application for `https://budgeting.benknight.dev`. Built at Novacoast. This package is independent of the portfolio Flutter application and its GitHub Pages deployment.
+Ben's Budgeteering is a standalone, single-owner Flutter web budgeting application for `https://budgeting.benknight.dev`. Built at Novacoast. This package is independent of the portfolio Flutter application and its GitHub Pages deployment.
 
-The CSV-backed workflow is the default: manual cash/card accounts, dated balance snapshots, CSV preview/import/undo, transaction annotations, categories, monthly budgets, and portable JSON export. Optional Stripe Financial Connections supplies read-only transactions and balances, not payments. Stripe is disabled by default.
+The CSV-backed workflow is the default: manual cash/card accounts, dated balance snapshots, CSV preview/import/undo, transaction annotations, global deposit/withdrawal group management, monthly Budgeteer funding plans, and portable JSON export. Optional Stripe Financial Connections supplies read-only transactions and balances, not payments. Stripe is disabled by default.
 
 This is a repository handoff, not evidence of a production deployment. Consult the final coordinator validation report and CI logs for actual results against the final tree. Commands below describe checks to run; their presence does not mean they passed. Hosted Supabase/Vercel behavior, SMTP delivery, DNS/TLS, and live bank access require separate owner-approved verification. No hosted projects, remote migrations, DNS changes, deployments, or paid subscriptions are authorized by these instructions alone.
 
@@ -28,11 +28,29 @@ The `private` schema stores the immutable owner mapping, provider mapping, jobs,
 
 ## Budgeteer
 
-Budgeteer is a separate monthly USD funding plan. Opening a month automatically includes eligible posted deposits and withdrawals across all accounts, using posted date or transaction date when posted date is unavailable. Transfers, card payments, budget-excluded activity, expense refunds, and income reversals retain their existing exclusions. Deposits form one pooled vertical bar; withdrawals occupy proportional sections. Remove any item you do not want in the plan. Reorder withdrawals and single-level groups, move entries between groups, and apply reusable custom labels. Keyboard and touch users can use explicit movement controls instead of dragging. Remaining funding and over-allocation are shown explicitly; this is not a live account balance or a replacement for ledger reports.
+Budgeteer has separate **Tower of Money**, **Withdrawals**, and **Deposits** tabs. Transaction creation and editing live on the corresponding withdrawal/deposit tab. Both lists show Ungrouped first only when it contains transactions; it remains an available assignment even while hidden. This is display order only: named withdrawal groups still fund in monthly priority order, followed by Ungrouped. Empty named groups remain available for editing.
 
-Plans, groups, entries, labels, associations, and source exclusions persist in dedicated `budgeteer_*` PostgreSQL tables. Removed linked transactions stay excluded for that month across reloads; Restore excluded transactions includes eligible excluded sources again. Unlinking preserves the independent planning entry and prevents its source from being added again automatically; restoring exclusions can therefore add that source alongside the unlinked planning item. Manual entries remain available. New eligible transactions are included on the next page load without overwriting existing plan edits. Editing a plan never edits raw bank transactions, ledger annotations, categories, or balances. Linked entries retain independent names and amounts; bank changes are flagged for explicit source refresh or unlinking. Source deletion preserves planning entries and their snapshots. Exclusions use transaction IDs, so reimports creating new IDs are treated as new sources. Plans do not roll over automatically.
+**Group manager** replaces the former **Budgets** sidebar entry. It lists **Deposit groups** and **Withdrawal groups**, with **Add deposit group** and **Add withdrawal group** actions; empty sections show **No deposit groups yet.** and **No withdrawal groups yet.** It reuses the Budgeteer group editor for names, colors and withdrawal parents. Opening or changing the reporting month in Group manager only reads `budgeteer_read`: it does not initialize a monthly plan or include bank sources. Explicit saves use the existing revision-checked `group_save` operation through `budgeteer_mutate`. The old category/monthly-limit management entrypoint is removed, not its data: existing categories, annotations, monthly budget rows, reporting calculations and export remain preserved.
 
-Authenticated owner/MFA-only `budgeteer_read` and `budgeteer_mutate` RPCs return canonical month-scoped state. Saves and reorders are atomic and revision-checked; stale tabs must reload before reapplying edits. Viewing an empty month does not create a plan. Reusable label edits use their returned update token for concurrency checks. Portable JSON export includes Budgeteer tables. Apply the forward Budgeteer migration through the existing approved deployment process before using this page; local validation does not apply hosted migrations.
+Budgeteer is a separate monthly USD funding plan. Opening a month initializes it through a revision-checked mutation and includes eligible posted deposits and withdrawals across all accounts, using posted date or transaction date when posted date is unavailable. Transfers, card payments, budget-excluded activity, expense refunds, and income reversals retain their existing exclusions. Deposits are manually assigned to flat deposit groups or remain Ungrouped and feed the synthetic Income root (100% of available funding). Withdrawal groups and subgroups form a separate hierarchy using an optional parent. Each withdrawal belongs directly to at most one withdrawal group; unassigned withdrawals remain Ungrouped. Group cards remain navigable even when empty or unfunded.
+
+Funding uses exact integer cents in deterministic depth-first sibling order (sort position, then stable ID): a group's direct withdrawals before its children, with top-level Ungrouped last. Parent totals roll up descendants once; direct allocations are distinguished from child allocations. Links show funded amounts only. Remaining income and unfunded withdrawals are separate, not additional funding. Explicit arrow controls reorder siblings for the selected month without changing global hierarchy or another month's priority. Global parent edits can change allocation priority in every month. Deleting a group moves its directly assigned transactions to Ungrouped in **all months** and promotes its immediate children to its former parent, preserving descendants and their assignments. Entries, amounts, bank links, source snapshots and exclusions are not deleted.
+
+Plans, groups, entries, archived labels and associations, and source exclusions persist in dedicated `budgeteer_*` PostgreSQL tables. Removed linked transactions stay excluded for that month across reloads; Restore excluded transactions includes eligible excluded sources again. Manual entries remain available. New eligible transactions are included on the next page load without overwriting existing plan edits. Editing a plan never edits raw bank transactions, ledger annotations, categories, or balances. Linked entries retain independent names and amounts; bank changes are flagged for explicit source refresh. Source deletion preserves planning entries and snapshots. Exclusions use transaction IDs, so reimports creating new IDs are treated as new sources. There is no transaction unlink control in the UI.
+
+Deposit and withdrawal groups now form one owner-scoped global catalog: IDs, names, colors, kinds and hierarchy are shared across past, future and not-yet-initialized months. Creates, renames, color changes and reparenting apply everywhere. Monthly transaction assignments, amounts, source exclusions and funding priority remain independent. `budgeteer_groups` has no `plan_id`; `budgeteer_group_positions` stores per-plan `sort_position` overrides and `budgeteer_group_state` stores the owner's global revision. Months without overrides use global default order. There is no automatic monthly group copy, copy preview or **Copy earlier groups** action; `groups_copy` is retired.
+
+The lossless forward migration preserves every existing group UUID, hierarchy, transaction assignment and original monthly ordering. Previously independent copies with identical names remain distinct global groups; names are not used to guess equivalence or silently merge IDs. Review duplicates explicitly after upgrading rather than deleting or deduplicating them during migration.
+
+Legacy labels and entry-label associations remain read-only archived records and remain covered by authorized export. The forward migration snapshots associations and original withdrawal data in `budgeteer_legacy_entry_labels`, independently of active entry lifetime, so deleting a planning entry does not erase its archive. The **Review archived labels** button and archive-conversion UI are retired; stored archives and backend conversion contracts remain intact. Existing transaction assignments remain authoritative. Active labels and label-edit operations are retired.
+
+Authenticated owner/MFA-only `budgeteer_read` and `budgeteer_mutate` RPCs return canonical state with `schema_version: 4`, top-level `owner_id` and `groups_revision`, including when `plan` is null. Groups have no `plan_id` and expose effective selected-month `sort_position`. The mutation signature remains `(p_month,p_revision,p_operation,p_payload)`. Every payload requires numeric `schema_version: 4` and `expected_groups_revision` from the last read; even otherwise empty operations use `{"schema_version":4,"expected_groups_revision":0}` with the actual returned revision. Missing, older, newer or string schema markers fail with `budgeteer_schema_upgrade_required` before any writes. Reads are side-effect-free. An owner advisory lock serializes mutations; stale monthly or global revisions raise `budgeteer_conflict` without partial writes, including cross-month catalog edits. Reload and review before reapplying. Global deletion also advances revisions of months whose assignments changed. The backend rejects cycles, self-parenting, cross-owner parents, invalid membership and stale label clients.
+
+Global groups have immutable `kind: deposit|withdrawal` (existing rows and omitted `group_save.kind` default to `withdrawal`). Deposit groups are flat and separate from the withdrawal hierarchy: their explicit `parent_group_id` must be null and they cannot parent withdrawals. `group_save` otherwise retains `name`, `color_key`, explicit nullable `parent_group_id` and optional `id`. Colors retain the existing preset keys or custom `hex_rrggbb` format. Both entry kinds accept a manually assigned same-owner, same-kind global `group_id`, or null for Ungrouped; bank inclusion/restoration never infers groups and source refresh preserves assignments. Complete `reorder` payloads must contain every global group and selected-month entry of BOTH kinds, including empty groups, with unique IDs and same-kind targets. Reorder changes only selected-month priority and assignments. Deleting a deposit group ungroups its deposits across all months without deleting them. Archived-label conversion only creates or targets withdrawal groups.
+
+Deployment order requires separate approval: after earlier migrations, apply `supabase/migrations/202611110001_budgeteer_hierarchy.sql`, `supabase/migrations/202611110002_budgeteer_deposit_groups.sql`, then `supabase/migrations/202611110003_budgeteer_global_groups.sql` in that order (never rewrite or rerun applied migrations). Back up first and review preserved IDs, assignments, duplicate names and monthly ordering. Release the matching API export/OpenAPI documentation, then the v4 frontend. Old clients must reload/update; they cannot safely mutate after the v4 migration. Until the schema update is deployed, the new UI reports an actionable database-update message instead of interpreting old responses as successful migration. Local synthetic verification does not apply hosted migrations or authorize deployment. Signed-in local development still targets the real backend and must not be used for automated financial-write tests.
+
+Portable export remains version 1 and includes every owner-scoped financial table: `profiles`, `accounts`, `balance_snapshots`, `transactions`, `transaction_annotations`, `categories`, `monthly_budgets`, `import_batches`, `budgeteer_plans`, `budgeteer_groups`, `budgeteer_group_state`, `budgeteer_group_positions`, `budgeteer_entries`, `budgeteer_labels`, `budgeteer_entry_labels`, `budgeteer_legacy_entry_labels`, and `budgeteer_source_exclusions`. Each table is paginated using its stable key and the verified owner filter, including composite monthly priority keys. Exported groups contain stored default ordering, while overrides are exported separately. Computed source status comes from reads, not storage. The owner/MFA-only, no-store download remains sensitive and formula-leading strings are escaped; it is not a complete database backup.
 
 Budgeteer domain, widget, repository, and SQL tests run through the existing containerized validation scripts. No additional environment variables or host dependencies are needed.
 
@@ -86,6 +104,98 @@ These values are embedded in public JavaScript. Anyone can read them. `scripts/b
 Hosted Supabase injects reserved variables such as `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`. Do not blindly upload the combined example with `secrets set`, overwrite reserved names, or invent a different project URL. Configure only the application secrets the hosted runtime needs; local harnesses provide isolated equivalents. SMTP credentials belong in Supabase Auth's SMTP configuration, not in Flutter or this public YAML.
 
 ## Local Setup
+
+### F5 From Host VS Code
+
+Keep VS Code open normally on macOS; this workflow does not require reopening
+in a devcontainer or installing Flutter/dependencies on the host.
+
+1. Start Docker Desktop (or your existing Docker engine) and install Chrome.
+2. Open the repository root in VS Code.
+3. Select **Budgeting (Docker, Real Backend)** in Run and Debug and press F5.
+4. Wait for the development task to compile, then use the Chrome window at
+   **http://localhost:8180**. Sign in using your existing owner password and TOTP.
+
+The task reuses `budgeting-flutter:latest`, building it if missing. It retrieves
+the deployed site's public `release-config.json` over verified HTTPS and passes
+only its Supabase URL/publishable key to Flutter. Stripe is always disabled for
+this workflow. No backend `.env` is loaded or mounted. This targets the **real
+backend**: signed-in changes affect real financial records, not a sandbox.
+The local origin has its own remembered session; expect to sign in initially.
+
+Port 8180 is published on host loopback only; port 8080 was already occupied
+on the development machine. Keep the exact `localhost` hostname for CORS and
+session consistency. Do not share the server through tunnels or public port
+forwarding. The source mounts contain only `lib`, `web`, public YAML and the
+development helper; generated packages/build state live in checkout-specific
+Docker volumes, leaving release artifacts and host package configuration alone.
+
+Saving Dart files under `lib/` or files under `web/` triggers Flutter reload via
+a container-side metadata watcher (rather than unreliable macOS bind-mount
+inotify). **Tasks: Run Task** also offers **Budgeting: Reload UI** and
+**Budgeting: Restart UI**. Reload preserves supported widget state; restart
+reruns initialization. Browser asset/bootstrap changes may require refreshing
+the browser or stopping and relaunching. Changes to dependencies, public
+configuration or `config.yaml` require stopping and relaunching.
+
+Stopping the browser debugging session runs **Budgeting: Stop Development
+Server**. The same task can stop an orphaned server. Task cancellation also
+cleans up the owned container. Other containers are never stopped; an occupied
+port or existing checkout development container causes startup to fail rather
+than attach to an unrelated service. Package/build cache volumes remain for
+the next launch and contain no copied financial records.
+
+This is a host Chrome browser-debug launch, **not an attached Dart debugger**:
+Dart breakpoints/Flutter Inspector and host analyzer SDK resolution are not
+provided. Use the devcontainer workflow below for container-aware Dart analysis.
+The VS Code browser launch itself requires a manual F5 acceptance check in the
+editor; CLI/browser smoke validation is not evidence that the editor was used.
+
+#### Backend Origin Settings
+
+Normal password/TOTP login and ledger reads use Supabase Auth/PostgREST. Edge
+operations (including import/export and usage) additionally require this exact
+origin in the hosted API's `ALLOWED_ORIGINS`:
+
+```text
+https://budgeting.benknight.dev,http://localhost:8180
+```
+
+Preserve any other explicitly approved origins already configured. The startup
+task performs an anonymous OPTIONS probe and warns if localhost is not allowed;
+it never modifies hosted settings. The initial November 11 probe returned 403,
+so Edge-backed features require that owner-approved hosted setting update.
+Do not disable CORS, MFA, RLS, or owner checks to work around it. For password
+recovery initiated from `/`, add `http://localhost:8180/` to Supabase Auth's
+allowed redirect URLs; keep the production Site URL unchanged. Ordinary
+password/TOTP sign-in does not require a redirect allowlist change.
+
+#### Corporate Trust And Public Overrides
+
+On a TLS-inspecting network, provide the approved **public CA certificate** at
+the gitignored `budgeting/dev-ca.local.crt`, or start VS Code with an absolute
+`BUILD_CA_FILE` environment value. The existing public development CA was
+placed at that local path on this machine; it is not committed. This certificate
+is mounted read-only and installed into container trust before dropping to the
+non-root builder. TLS verification remains enabled. Never use a private key.
+
+For a different approved backend or if the deployed public manifest is
+unavailable, set `BUDGETING_DEV_PUBLIC_CONFIG` in the development task's
+`options.env` to an absolute JSON file path. A gitignored location is
+`budgeting/dev-public.local.json`. Its format is:
+
+```json
+{
+  "supabaseUrl": "https://YOUR_PROJECT_REF.supabase.co",
+  "supabasePublishableKey": "YOUR_PUBLIC_PUBLISHABLE_KEY"
+}
+```
+
+Replace both placeholders with the matching hosted project's **public** values.
+Unknown fields, non-hosted URLs, legacy JWT keys and secret keys are rejected.
+Never point this option to `.env`, export credentials, or a backend secrets file.
+Configuration values are not printed in launcher logs. Network, trust or invalid
+configuration errors stop startup instead of silently opening an unconfigured app.
 
 ### VS Code Diagnostics
 

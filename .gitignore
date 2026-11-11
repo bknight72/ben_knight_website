@@ -72,3 +72,5 @@ budgeting/supabase/functions/deno.lock
 **/*.age
 **/supabase/.temp/
 **/supabase/.branches/
+budgeting/dev-public.local.json
+budgeting/dev-ca.local.crt

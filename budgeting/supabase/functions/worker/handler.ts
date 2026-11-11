@@ -222,7 +222,8 @@ export async function processJob(
           "Provider returned invalid USD balance.",
         );
       }
-      // Stripe current credit balance is outstanding liability; retain it separately from cash.
+      // Retain Stripe's signed balance: negative means owed by the holder.
+      // Readers normalize credit liabilities using the snapshot's stripe source.
       await db.state(
         "balance_snapshot",
         {

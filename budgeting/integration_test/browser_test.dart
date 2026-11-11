@@ -13,7 +13,7 @@ void main() {
     expect(config.reportingTimezone, 'America/Denver');
     await tester.pumpWidget(BudgetApp(config: config));
     await tester.pumpAndSettle();
-    expect(find.text('ledger'), findsOneWidget);
+    expect(find.text("Ben's Budgeteering"), findsOneWidget);
     expect(find.textContaining('No account or financial data'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

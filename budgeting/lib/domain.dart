@@ -4,12 +4,16 @@ import 'package:timezone/timezone.dart' as tz;
 import 'config.dart';
 
 bool _zonesLoaded = false;
-String reportingMonth(DateTime instant) {
+tz.TZDateTime _reportingDateTime(DateTime instant) {
   if (!_zonesLoaded) {
     tzdata.initializeTimeZones();
     _zonesLoaded = true;
   }
-  final local = tz.TZDateTime.from(instant, tz.getLocation('America/Denver'));
+  return tz.TZDateTime.from(instant, tz.getLocation('America/Denver'));
+}
+
+String reportingMonth(DateTime instant) {
+  final local = _reportingDateTime(instant);
   return '${local.year}-${local.month.toString().padLeft(2, '0')}';
 }
 
@@ -77,6 +81,153 @@ class LedgerSummary {
   }
 }
 
+/// Balances are observations of retained accounts, not exact closing balances.
+class MonthlyFinancialHistory {
+  final String month;
+  final bool isCurrent;
+  final int? netWorth;
+  final int? totalDebt;
+  final int spending;
+  final int accountCount;
+  final int creditAccountCount;
+  final int observedCreditAccountCount;
+  final Map<String, DateTime> observations;
+  final DateTime? oldestObservation;
+  final DateTime? oldestCreditObservation;
+
+  const MonthlyFinancialHistory({
+    required this.month,
+    required this.isCurrent,
+    required this.netWorth,
+    required this.totalDebt,
+    required this.spending,
+    required this.accountCount,
+    required this.creditAccountCount,
+    required this.observedCreditAccountCount,
+    required this.observations,
+    required this.oldestObservation,
+    required this.oldestCreditObservation,
+  });
+
+  String get label => '$month${isCurrent ? ' (so far)' : ''}';
+  int get observedAccountCount => observations.length;
+  int get carriedForwardAccountCount => observations.values
+      .where((date) => reportingMonth(date).compareTo(month) < 0)
+      .length;
+}
+
+/// Empty before October 2026. Missing observations never become zero balances.
+List<MonthlyFinancialHistory> financialHistory(
+  List<Json> accounts,
+  List<Json> snapshots,
+  List<Json> transactions, {
+  required DateTime now,
+}) {
+  final localNow = _reportingDateTime(now);
+  final currentMonth = reportingMonth(now);
+  final today = '$currentMonth-${localNow.day.toString().padLeft(2, '0')}';
+  final ordered = <({Json row, DateTime observed})>[];
+  for (final row in snapshots) {
+    final timestamp = '${row['observed_at']}';
+    // A timestamp without an offset is not an unambiguous observation instant.
+    if (!RegExp(r'(Z|[+-]\d{2}:?\d{2})$', caseSensitive: false)
+        .hasMatch(timestamp)) {
+      continue;
+    }
+    final observed = DateTime.tryParse(timestamp)?.toUtc();
+    if (observed == null || row['current_minor'] == null) continue;
+    ordered.add((row: row, observed: observed));
+  }
+  ordered.sort((a, b) {
+    var comparison = a.observed.compareTo(b.observed);
+    if (comparison == 0) {
+      comparison = '${a.row['id'] ?? ''}'.compareTo('${b.row['id'] ?? ''}');
+    }
+    // Also deterministic for imported/test rows without distinct snapshot IDs.
+    return comparison != 0
+        ? comparison
+        : integer(a.row['current_minor'])
+            .compareTo(integer(b.row['current_minor']));
+  });
+  final currentTransactions = transactions.where((row) {
+    final date = '${row['posted_date'] ?? row['transaction_date'] ?? ''}';
+    return date.compareTo(today) <= 0;
+  }).toList();
+  final history = <MonthlyFinancialHistory>[];
+  final latest = <String, ({Json row, DateTime observed})>{};
+  var cursor = 0;
+  for (var start = tz.TZDateTime(localNow.location, 2026, 10);
+      !start.isAfter(localNow);
+      start = tz.TZDateTime(localNow.location, start.year, start.month + 1)) {
+    final month = reportingMonth(start);
+    final isCurrent = month == currentMonth;
+    final boundary =
+        tz.TZDateTime(localNow.location, start.year, start.month + 1);
+    while (cursor < ordered.length &&
+        (isCurrent
+            ? !ordered[cursor].observed.isAfter(now)
+            : ordered[cursor].observed.isBefore(boundary))) {
+      final snapshot = ordered[cursor++];
+      latest['${snapshot.row['account_id']}'] = snapshot;
+    }
+    var netWorth = 0;
+    var debt = 0;
+    var creditCount = 0;
+    var observedCreditCount = 0;
+    DateTime? oldest;
+    DateTime? oldestCredit;
+    final observations = <String, DateTime>{};
+    for (final account in accounts) {
+      final credit = (account['type'] ?? account['kind']) == 'credit';
+      if (credit) creditCount++;
+      final id = '${account['id']}';
+      final snapshot = latest[id];
+      if (snapshot == null) continue;
+      final balance = accountBalance(account, snapshot.row);
+      final observed = snapshot.observed;
+      observations[id] = observed;
+      if (oldest == null || observed.isBefore(oldest)) oldest = observed;
+      netWorth += credit ? -balance : balance;
+      if (credit) {
+        observedCreditCount++;
+        if (balance > 0) debt += balance;
+        if (oldestCredit == null || observed.isBefore(oldestCredit)) {
+          oldestCredit = observed;
+        }
+      }
+    }
+    history.add(MonthlyFinancialHistory(
+      month: month,
+      isCurrent: isCurrent,
+      netWorth: accounts.isNotEmpty && observations.length == accounts.length
+          ? netWorth
+          : null,
+      totalDebt: accounts.isNotEmpty && observedCreditCount == creditCount
+          ? debt
+          : null,
+      spending: LedgerSummary.calculate(
+              isCurrent ? currentTransactions : transactions, month)
+          .spending,
+      accountCount: accounts.length,
+      creditAccountCount: creditCount,
+      observedCreditAccountCount: observedCreditCount,
+      observations: Map.unmodifiable(observations),
+      oldestObservation: oldest,
+      oldestCreditObservation: oldestCredit,
+    ));
+  }
+  return history;
+}
+
+/// Stripe snapshots use negative liabilities; manual snapshots use positive debt.
+int accountBalance(Json account, Json snapshot) {
+  final balance = integer(snapshot['current_minor']);
+  return (account['type'] ?? account['kind']) == 'credit' &&
+          (snapshot['source'] ?? account['source']) == 'stripe'
+      ? -balance
+      : balance;
+}
+
 /// A missing balance is not zero. Credit balances are positive liabilities.
 int? netPosition(List<Json> accounts) {
   if (accounts.isEmpty || accounts.any((a) => a['balance_minor'] == null)) {
@@ -86,7 +237,7 @@ int? netPosition(List<Json> accounts) {
       0,
       (sum, a) =>
           sum +
-          (a['type'] == 'credit'
+          ((a['type'] ?? a['kind']) == 'credit'
               ? -integer(a['balance_minor'])
               : integer(a['balance_minor'])));
 }

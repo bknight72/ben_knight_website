@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// A single portfolio project entry shown in the "Featured Work" section.
 ///

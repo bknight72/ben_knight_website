@@ -3,7 +3,7 @@
 
 import 'dart:ui' show PointerDeviceKind;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -365,15 +365,15 @@ void main() {
     await tester.tap(open);
     await tester.pump();
     final overlay = find.byType(MobileNavOverlay);
-    final fade = find.ancestor(
-      of: overlay,
-      matching: find.byType(FadeTransition),
-    ).first;
+    final fade = find
+        .ancestor(
+          of: overlay,
+          matching: find.byType(FadeTransition),
+        )
+        .first;
     await tester.pump(const Duration(milliseconds: 100));
-    expect(tester.widget<FadeTransition>(fade).opacity.value,
-        greaterThan(0));
-    expect(tester.widget<FadeTransition>(fade).opacity.value,
-        lessThan(1));
+    expect(tester.widget<FadeTransition>(fade).opacity.value, greaterThan(0));
+    expect(tester.widget<FadeTransition>(fade).opacity.value, lessThan(1));
     await tester.pumpAndSettle();
 
     expect(overlay, findsOneWidget);
@@ -503,10 +503,8 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     expect(overlay, findsOneWidget);
-    expect(tester.widget<FadeTransition>(fade).opacity.value,
-        greaterThan(0));
-    expect(tester.widget<FadeTransition>(fade).opacity.value,
-        lessThan(1));
+    expect(tester.widget<FadeTransition>(fade).opacity.value, greaterThan(0));
+    expect(tester.widget<FadeTransition>(fade).opacity.value, lessThan(1));
     await tester.pumpAndSettle();
     expect(overlay, findsNothing);
     expect(open, findsOneWidget);

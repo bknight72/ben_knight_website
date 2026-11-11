@@ -1,6 +1,6 @@
-# Budgeting Production Runbook
+# Ben's Budgeteering Production Runbook
 
-This runbook takes the private budgeting app from validated local code to
+This runbook takes Ben's Budgeteering from validated local code to
 `https://budgeting.benknight.dev`. Launch CSV imports and manual snapshots first.
 Stripe Financial Connections is a separate, owner-operated opt-in described in section 13.
 
@@ -140,11 +140,62 @@ files in this order:
 1. `budgeting/supabase/migrations/202611040001_budgeting.sql`
 2. `budgeting/supabase/migrations/202611050001_usage_and_worker_hardening.sql`
 3. `budgeting/supabase/migrations/202611100001_stripe_linking_lifecycle.sql` for the reviewed live-linking release, before updated functions/frontend
+4. `budgeting/supabase/migrations/202611100002_remove_paid_refresh_cooldown.sql`
+5. `budgeting/supabase/migrations/202611100004_budgeteer.sql`
+6. `budgeting/supabase/migrations/202611100005_budgeteer_sources.sql`
+7. `budgeting/supabase/migrations/202611110001_budgeteer_hierarchy.sql`
+8. `budgeting/supabase/migrations/202611110002_budgeteer_deposit_groups.sql`
+9. `budgeting/supabase/migrations/202611110003_budgeteer_global_groups.sql`
 
-For an existing two-migration deployment apply only the new forward migration,
-after backup/review; do not rerun the first two files. Preserve old-frontend
-compatibility and disable new linking during the upgrade. Never substitute a
+For an existing deployment apply only unapplied forward migrations,
+after backup/review; do not rerun applied files. Disable new linking during
+the upgrade. The global-group v4 migration intentionally rejects old planning
+clients; coordinate a frontend reload/update rather than preserving unsafe v3
+mutation compatibility. Never substitute a
 test bootstrap or let release CI apply/repair migrations.
+
+### Global Group Upgrade
+
+This is a deployment checklist only, not remote execution authorization. Before
+the v4 migration, take a verified backup and record group IDs, hierarchy,
+assignments and each month's ordering in private administration. The lossless
+migration promotes every existing group into an owner-global catalog without
+merging IDs or matching by name. Previously copied groups with duplicate names
+remain separate; this is intentional preservation, not a failed upgrade.
+
+`budgeteer_groups` no longer has `plan_id`. `budgeteer_group_state` holds the
+owner-global revision; `budgeteer_group_positions` holds per-plan group priority
+(`owner_id`, `plan_id`, `group_id`, `sort_position`). Group names, kinds, colors
+and withdrawal hierarchy are global. Transactions, amounts, assignments, source
+exclusions and funding priority remain monthly. Deposit groups remain flat.
+There is no automatic group copying, copy preview or supported `groups_copy`.
+
+Apply reviewed SQL first, deploy matching Edge export/OpenAPI code second, and
+publish the matching v4 frontend last. Keep financial writes paused during the
+coordinated upgrade and require stale tabs to reload. Reads must return numeric
+`schema_version:4`, `owner_id` and `groups_revision`, even with `plan:null`, and
+global groups with effective monthly `sort_position`. The unchanged mutation
+signature `(p_month,p_revision,p_operation,p_payload)` requires numeric payload
+`schema_version:4` plus `expected_groups_revision` on every operation. Stale
+monthly or global revisions must conflict with no partial writes; old schema
+markers must fail closed. Do not relax owner/MFA/RLS checks to bypass errors.
+
+Verify past, future and absent-plan months share the same catalog IDs, while
+reordering/assignments in one month do not change another month. Global rename,
+color and parent edits must appear everywhere. Test deletion using synthetic
+data only: directly assigned transactions become Ungrouped in all months,
+immediate children are promoted to the deleted group's parent, descendant
+assignments survive, and affected monthly revisions advance. Preserve all
+entries, amounts, bank links, source snapshots, exclusions and archives.
+
+Verify authorized export includes all financial tables enumerated in the README,
+especially `budgeteer_group_state` and `budgeteer_group_positions`, and paginates
+past 1,000 rows without invalid `id` ordering on these tables. Anonymous,
+wrong-owner, non-MFA and expired sessions must be denied before financial reads.
+Export remains version 1, sensitive and no-store, not a recovery backup. Run the
+containerized backend/database tests and populated-upgrade/concurrency fixtures
+locally before separately approved hosted acceptance; no remote SQL or deploy
+is performed by these instructions.
 
 Review the selected project before executing. Record success and migration
 history privately. Never apply `tests/bootstrap.sql` to managed Supabase. Do not

@@ -301,7 +301,20 @@ export const openapi = {
       BudgeteerGroup: object({
         id: uuid("Database-generated group ID"),
         owner_id: uuid("Provisioned owner"),
-        plan_id: uuid("Containing plan"),
+        kind: {
+          ...string(
+            "Immutable group kind; existing groups default to withdrawal",
+            "withdrawal",
+          ),
+          enum: ["deposit", "withdrawal"],
+          default: "withdrawal",
+        },
+        parent_group_id: {
+          ...uuid(
+            "Optional global withdrawal parent belonging to the same owner; deposits require null; cycles rejected",
+          ),
+          nullable: true,
+        },
         name: {
           ...string(
             "Trimmed nonempty group name, max 80 characters",
@@ -310,13 +323,37 @@ export const openapi = {
           maxLength: 80,
         },
         color_key: string(
-          "Lowercase palette key matching [a-z][a-z0-9_-]{0,31}; UI uses teal/blue/amber/rose/violet/slate",
+          "Lowercase color key matching [a-z][a-z0-9_-]{0,31}; presets teal/blue/amber/rose/violet/slate or custom RGB hex_rrggbb",
           "teal",
         ),
         sort_position: {
           type: "integer",
           format: "int64",
-          description: "Group order; Ungrouped is virtual and follows groups",
+          description:
+            "Effective selected-month sibling order in reads, global default order in storage/export; stable ID breaks ties. DFS allocation visits direct entries then children, Ungrouped last",
+          example: 0,
+        },
+      }),
+      BudgeteerGroupState: object({
+        owner_id: uuid("Provisioned owner; primary key"),
+        revision: {
+          type: "integer",
+          format: "int64",
+          minimum: 0,
+          description:
+            "Owner-global catalog revision returned as groups_revision",
+          example: 1,
+        },
+      }),
+      BudgeteerGroupPosition: object({
+        owner_id: uuid("Provisioned owner"),
+        plan_id: uuid("Monthly plan whose priority is overridden"),
+        group_id: uuid("Owner-global group; composite key with plan_id"),
+        sort_position: {
+          type: "integer",
+          format: "int64",
+          description:
+            "Monthly sibling priority; does not change global group definitions",
           example: 0,
         },
       }),
@@ -345,7 +382,9 @@ export const openapi = {
           example: 1234,
         },
         group_id: {
-          ...uuid("Optional withdrawal group; deposits must be ungrouped"),
+          ...uuid(
+            "Optional same-kind global group belonging to the same owner; null means Ungrouped",
+          ),
           nullable: true,
         },
         sort_position: {
@@ -387,7 +426,7 @@ export const openapi = {
         ),
         updated_at: {
           ...string(
-            "Opaque PostgreSQL ISO-8601 timestamp token with up to six fractional digits. Echo exact returned string as expected_updated_at; never parse/reformat through a millisecond-precision Date",
+            "Archived label timestamp, read-only; active label mutations are retired",
             "2026-11-10T22:00:00.123456+00:00",
           ),
           format: "date-time",
@@ -397,6 +436,24 @@ export const openapi = {
         owner_id: uuid("Provisioned owner"),
         entry_id: uuid("Withdrawal entry"),
         label_id: uuid("Reusable owner label"),
+      }),
+      BudgeteerLegacyEntryLabel: object({
+        id: uuid("Immutable archive record"),
+        owner_id: uuid("Provisioned owner"),
+        plan_id: uuid("Original monthly plan"),
+        entry_id: uuid("Original withdrawal ID, retained after entry deletion"),
+        label_id: uuid("Archived owner label"),
+        entry_snapshot: {
+          type: "object",
+          description:
+            "Immutable original stored withdrawal fields, including identity, name, amount and source snapshot",
+          example: {
+            id: "00000000-0000-4000-8000-000000000001",
+            kind: "withdrawal",
+            name: "Groceries",
+            amount_minor: 1234,
+          },
+        },
       }),
       BudgeteerSourceExclusion: object({
         id: uuid("Database-generated exclusion ID"),
@@ -410,6 +467,21 @@ export const openapi = {
         ),
       }),
       BudgeteerState: object({
+        schema_version: {
+          type: "integer",
+          enum: [4],
+          description: "Required owner-global groups contract version",
+          example: 4,
+        },
+        owner_id: uuid("Provisioned owner, present even when plan is null"),
+        groups_revision: {
+          type: "integer",
+          format: "int64",
+          minimum: 0,
+          description:
+            "Owner-global catalog revision, present even when plan is null",
+          example: 0,
+        },
         plan: {
           allOf: [ref("BudgeteerPlan")],
           nullable: true,
@@ -417,25 +489,27 @@ export const openapi = {
         },
         groups: {
           type: "array",
-          description: "Ordered groups in this month",
+          description:
+            "All owner-global groups with effective selected-month sort_position, including when plan is null; no plan_id on groups",
           items: ref("BudgeteerGroup"),
         },
         entries: {
           type: "array",
           description:
-            "Deposits first, then contiguous withdrawal groups, then Ungrouped",
+            "Canonical entries; clients allocate withdrawals in DFS sibling order, direct entries before children, Ungrouped last",
           items: ref("BudgeteerEntry"),
         },
-        labels: {
+        legacy_labels: {
           type: "array",
           description:
-            "All reusable owner labels, including when plan is absent",
+            "Read-only archived owner labels, including when plan is absent",
           items: ref("BudgeteerLabel"),
         },
-        entry_labels: {
+        legacy_entry_labels: {
           type: "array",
-          description: "Assignments for this plan only",
-          items: ref("BudgeteerEntryLabel"),
+          description:
+            "Immutable archived associations for this plan; survives entry deletion",
+          items: ref("BudgeteerLegacyEntryLabel"),
         },
         excluded_source_count: {
           type: "integer",
@@ -455,7 +529,7 @@ export const openapi = {
           format: "int64",
           minimum: 0,
           description:
-            "Exact last returned plan revision, or 0 when absent. Stale plan or label token raises PostgreSQL P0001 message budgeteer_conflict, with no partial writes",
+            "Exact last returned plan revision, or 0 when absent. Stale monthly or global revision raises budgeteer_conflict with no partial writes",
           example: 0,
         },
         p_operation: {
@@ -465,8 +539,8 @@ export const openapi = {
             "entry_delete",
             "group_save",
             "group_delete",
-            "label_save",
-            "label_delete",
+            "initialize",
+            "legacy_label_convert",
             "source_refresh",
             "source_unlink",
             "sources_include",
@@ -479,13 +553,30 @@ export const openapi = {
         p_payload: {
           type: "object",
           description:
-            "Operation-specific payload: entry_save requires kind/name/amount_minor/label_ids and optional id/group_id/source_transaction_id; label_ids are complete and withdrawals only. group_save requires name/color_key and optional id. label_save requires name/color_key, optional id and expected_updated_at on update; label_delete requires id/expected_updated_at. entry_delete/group_delete/source_refresh/source_unlink require id. sources_include and sources_restore require an empty object. reorder requires complete unique groups:[UUID] and entries:[{id,group_id:UUID|null}] lists. IDs omitted on create are database-generated; supplied IDs must already belong to this plan/owner. Group deletion ungroups entries; label deletion removes assignments only. Existing links/snapshots are preserved by entry_save; explicit source_unlink clears both and excludes the former source for this month; deleting a linked entry also persists its exclusion. Explicit entry_save linking clears that source exclusion. source_refresh validates current source and resets snapshot/name/amount. Replacing an existing link requires unlink first.",
+            "EVERY operation requires numeric schema_version:4 and expected_groups_revision from the last read, even when plan is null; missing, stale or string schema markers fail with budgeteer_schema_upgrade_required before writes. Stale monthly or global revisions raise budgeteer_conflict. entry_save requires kind/name/amount_minor and optional id/group_id/source_transaction_id; group_id must match entry kind and owner; omit retired label_ids. group_save requires name/color_key/parent_group_id (nullable), optional id and immutable kind (default withdrawal); definitions are global. Deposit groups require null parent; withdrawal parents must be same-owner withdrawal groups. group_delete ungroups directly assigned entries in ALL months, promotes immediate children to the deleted group's parent and updates affected monthly revisions; descendants, amounts, source links/snapshots and exclusions persist. initialize, sources_include and sources_restore use {schema_version:4,expected_groups_revision:0} with the actual returned revision; no automatic copying. groups_copy and label operations are retired. legacy_label_convert requires confirmed:true,label_id,entry_ids and either a withdrawal group_id or name/color_key/parent_group_id for a new global withdrawal group; only selected monthly entries move. Archives persist. reorder requires complete unique groups:[UUID] of BOTH kinds and entries:[{id,group_id:UUID|null}] of BOTH kinds, with same-kind targets; it changes only selected-month priority and assignments. entry_delete/source_refresh/source_unlink require id. Source validation and exclusions remain enforced.",
+          required: ["schema_version", "expected_groups_revision"],
           properties: {
+            schema_version: {
+              type: "integer",
+              enum: [4],
+              description:
+                "Required on every mutation; exact numeric client contract marker",
+              example: 4,
+            },
+            expected_groups_revision: {
+              type: "integer",
+              format: "int64",
+              minimum: 0,
+              description:
+                "Required exact groups_revision from the last read, including absent-plan reads; stale cross-month edits conflict",
+              example: 0,
+            },
             id: uuid("Existing object ID; omit on create"),
             kind: {
               type: "string",
               enum: ["deposit", "withdrawal"],
-              description: "Entry kind",
+              description:
+                "Entry kind or immutable group kind; group_save defaults to withdrawal",
               example: "withdrawal",
             },
             name: string("Independent planning name", "Groceries"),
@@ -497,48 +588,60 @@ export const openapi = {
               description: "Positive USD cents",
               example: 1234,
             },
-            group_id: { ...uuid("Withdrawal group or null"), nullable: true },
+            group_id: { ...uuid("Same-kind group or null"), nullable: true },
             source_transaction_id: {
               ...uuid(
                 "Optional eligible bank source; omitted on existing entry preserves source",
               ),
               nullable: true,
             },
-            color_key: string("Palette key", "teal"),
-            expected_updated_at: string(
-              "Exact returned label updated_at token required on existing label update/delete",
-              "2026-11-10T22:00:00.123456+00:00",
-            ),
-            label_ids: {
+            color_key: string("Palette key or custom RGB hex_rrggbb", "teal"),
+            parent_group_id: {
+              ...uuid(
+                "Explicit same-owner global withdrawal parent; null for top level and all deposit groups",
+              ),
+              nullable: true,
+            },
+            confirmed: {
+              type: "boolean",
+              description: "Explicit archived-label conversion confirmation",
+              example: true,
+            },
+            label_id: uuid("Archived label to review"),
+            entry_ids: {
               type: "array",
               uniqueItems: true,
-              description: "Complete label assignment list; empty for deposits",
-              items: uuid("Owner label"),
+              description:
+                "Explicitly selected monthly withdrawals carrying the archived label",
+              items: uuid("Chosen withdrawal"),
             },
             groups: {
               type: "array",
               uniqueItems: true,
-              description: "Complete ordered group IDs",
-              items: uuid("Plan group"),
+              description:
+                "Complete ordered global group IDs of both kinds; priority is stored for the selected month only",
+              items: uuid("Global group"),
             },
             entries: {
               type: "array",
               description:
-                "Complete ordered entry IDs and target groups, deposits included with null group",
+                "Complete ordered entry IDs of both kinds and same-kind target groups",
               items: object({
                 id: uuid("Plan entry"),
                 group_id: {
-                  ...uuid("Target group, null for ungrouped/deposits"),
+                  ...uuid("Same-kind target group, null for Ungrouped"),
                   nullable: true,
                 },
               }),
             },
           },
           example: {
+            schema_version: 4,
+            expected_groups_revision: 0,
             kind: "withdrawal",
             name: "Groceries",
             amount_minor: 1234,
-            label_ids: [],
+            group_id: null,
           },
         },
       }),
@@ -567,7 +670,7 @@ export const openapi = {
           ref("BudgeteerState"),
         ),
         description:
-          "sources_include appends every missing eligible posted nonzero transaction across all owner accounts for the reporting month, using posted_date then transaction_date. Transfers, card payments, budget-excluded activity, expense refunds and income reversals are excluded. Entries append deterministically by effective date then source UUID, withdrawals Ungrouped; existing values, snapshots, groups, labels and positions are untouched. sources_restore clears current-month exclusions then includes eligible sources in the same transaction. Both operations require exact revisions, enforce aggregate limits atomically and increment once only when state changes; a no-op leaves revision unchanged and an empty absent month remains absent. Other successful mutations create an absent plan. Owner-global label writes advance every owner plan revision and require opaque updated_at tokens on updates/deletes. Raw bank-source deletion preserves independent entries/snapshots, cascades exclusions and bumps affected plan revisions, including service-role account deletion/import undo. Plan deletion cascades exclusions. Exclusions identify transaction UUIDs, not newly assigned IDs on reimport. Reads and mutations never write bank tables. Tables allow owner/MFA SELECT only for browsers; direct browser writes are revoked. PostgREST errors use its native {code,message,details,hint} shape, with budgeteer_conflict identifiable in message (P0001). Other validation errors roll back all changes.",
+          "Signature remains p_month,p_revision,p_operation,p_payload. Every operation requires numeric p_payload.schema_version:4 and expected_groups_revision. Old or invalid schema markers fail closed with budgeteer_schema_upgrade_required before writes; stale monthly/global revisions raise budgeteer_conflict. Owner advisory locking serializes cross-month edits. Groups are owner-global with shared IDs, kinds, names, colors and withdrawal hierarchy, including absent-plan reads. Group deletion ungroups direct entries in every month and promotes children, preserving entries, amounts, sources, snapshots and exclusions; affected monthly revisions advance. Monthly priority is separate from global definitions. initialize and source inclusion never copy groups; groups_copy and copy previews are retired. Source inclusion appends both kinds Ungrouped without changing saved entries; refresh preserves assignments. Owner/MFA, complete reorder membership, immutable group kind, same-kind assignments, same-owner parents and cycle prevention are enforced server-side. Deposit groups stay flat. Archives remain read-only; conversion targets withdrawals only. Direct browser writes are revoked. PostgREST errors use native {code,message,details,hint}; budgeteer_conflict requires reload/review. Validation errors roll back all changes.",
       },
     },
     "/health": {
@@ -786,8 +889,33 @@ export const openapi = {
           "200": response("Portable JSON financial export, version 1", {
             type: "object",
             description:
-              "Existing version/currency/exportedAt and profiles/accounts/balance_snapshots/transactions/transaction_annotations/categories/monthly_budgets/import_batches fields are unchanged. Adds all owner-scoped Budgeteer storage rows; computed source_current/source_state are obtained through budgeteer_read, not stored in export.",
+              "Complete owner-scoped table enumeration below; version/currency/exportedAt and existing financial fields remain unchanged. Includes global catalog revision and monthly priority rows. Global groups have no plan_id and their stored sort_position is the default, not an effective monthly override. Computed source_current/source_state are obtained through budgeteer_read, not stored in export. Formula-leading strings are escaped for safety; this sensitive portable download is not a database backup.",
             properties: {
+              version: {
+                type: "integer",
+                enum: [1],
+                description: "Portable export format version",
+                example: 1,
+              },
+              currency: { ...string("Export currency", "USD"), enum: ["USD"] },
+              exportedAt: {
+                ...string("Export timestamp", "2026-11-11T00:00:00Z"),
+                format: "date-time",
+              },
+              ...Object.fromEntries([
+                "profiles",
+                "accounts",
+                "balance_snapshots",
+                "transactions",
+                "transaction_annotations",
+                "categories",
+                "monthly_budgets",
+                "import_batches",
+              ].map((table) => [table, {
+                type: "array",
+                description: `All owner-scoped ${table} storage rows`,
+                items: { type: "object" },
+              }])),
               budgeteer_plans: {
                 type: "array",
                 items: ref("BudgeteerPlan"),
@@ -796,7 +924,19 @@ export const openapi = {
               budgeteer_groups: {
                 type: "array",
                 items: ref("BudgeteerGroup"),
-                description: "All plan groups",
+                description:
+                  "All owner-global groups with stable IDs, kinds, hierarchy, colors and default order; no plan_id",
+              },
+              budgeteer_group_state: {
+                type: "array",
+                items: ref("BudgeteerGroupState"),
+                description: "Owner-global revision state",
+              },
+              budgeteer_group_positions: {
+                type: "array",
+                items: ref("BudgeteerGroupPosition"),
+                description:
+                  "All monthly group priority overrides, ordered by plan_id and group_id for pagination",
               },
               budgeteer_entries: {
                 type: "array",
@@ -816,6 +956,12 @@ export const openapi = {
                 type: "array",
                 items: ref("BudgeteerEntryLabel"),
                 description: "All entry assignments",
+              },
+              budgeteer_legacy_entry_labels: {
+                type: "array",
+                items: ref("BudgeteerLegacyEntryLabel"),
+                description:
+                  "Immutable archived associations and original withdrawal snapshots, including deleted entries",
               },
               budgeteer_source_exclusions: {
                 type: "array",

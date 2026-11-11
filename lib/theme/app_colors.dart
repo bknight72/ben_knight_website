@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// Shared color constants approximating the reference site's palette (white
 /// background, black text, teal accent, dark green footer).

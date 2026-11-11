@@ -111,7 +111,9 @@ export class Database {
             ? "transaction_id"
             : table === "budgeteer_entry_labels"
             ? "entry_id,label_id"
-            : table === "profiles"
+            : table === "budgeteer_group_positions"
+            ? "plan_id,group_id"
+            : table === "profiles" || table === "budgeteer_group_state"
             ? "owner_id"
             : "id"
         }&limit=1000&offset=${offset}${query}`,

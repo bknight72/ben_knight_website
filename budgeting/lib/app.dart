@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show OverflowBoxFit;
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:supabase/supabase.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' show Supabase;
@@ -9,11 +10,13 @@ import 'platform.dart' as platform;
 import 'repository.dart';
 import 'config.dart';
 import 'budgeteer.dart';
+import 'financial_history_chart.dart';
 
 const ink = Color(0xff102e2c);
 const teal = Color(0xff17695c);
-const canvas = Color(0xfff4f6f3);
+const canvas = Color(0x00202421);
 const muted = Color(0xff637570);
+const darkSurfaceTitle = Color(0xffdcf8ea);
 
 String completionMessage(Json result) {
   final statuses = result['accountStatuses'];
@@ -73,7 +76,7 @@ class BudgetApp extends StatelessWidget {
       this.configurationError = false});
   @override
   Widget build(BuildContext context) => MaterialApp(
-        title: 'Ledger | Private Budgeting',
+        title: "Ben's Budgeteering",
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           useMaterial3: true,
@@ -128,18 +131,20 @@ class Brand extends StatelessWidget {
   final bool light;
   const Brand({super.key, this.light = false});
   @override
-  Widget build(BuildContext context) =>
-      Row(mainAxisSize: MainAxisSize.min, children: [
+  Widget build(BuildContext context) => FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.centerLeft,
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(Icons.account_balance_wallet_outlined,
             color: light ? const Color(0xffb7e0b8) : teal, size: 29),
         const SizedBox(width: 12),
-        Text('ledger',
+        Text("Ben's Budgeteering",
             style: TextStyle(
                 fontSize: 27,
                 fontWeight: FontWeight.w700,
                 letterSpacing: -1,
                 color: light ? Colors.white : ink)),
-      ]);
+      ]));
 }
 
 class ConfigurationScreen extends StatelessWidget {
@@ -157,7 +162,7 @@ class ConfigurationScreen extends StatelessWidget {
                   fontSize: 30, fontWeight: FontWeight.bold, color: ink)),
           SizedBox(height: 18),
           Text(
-              'This ledger is not configured yet. No account or financial data is loaded.'),
+              "Ben's Budgeteering is not configured yet. No account or financial data is loaded."),
           SizedBox(height: 18),
           Text(
               'Build with SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY to connect your provisioned owner account. Public signup is not available. Stripe remains disabled until explicitly approved and configured.'),
@@ -445,7 +450,7 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
       if (owner != true) {
         await logout();
         throw const FormatException(
-            'This identity is not the provisioned ledger owner.');
+            'This identity is not the provisioned app owner.');
       }
       if (mounted &&
           epoch == sessionEpoch &&
@@ -472,7 +477,8 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
         await client.auth.mfa.unenroll(factor.id);
       }
       final enrollment = await client.auth.mfa.enroll(
-          factorType: FactorType.totp, friendlyName: 'Ledger authenticator');
+          factorType: FactorType.totp,
+          friendlyName: "Ben's Budgeteering authenticator");
       if (!mounted || epoch != sessionEpoch || signingOut || recovery) return;
       factorId = enrollment.id;
       final image = enrollment.totp?.qrCode;
@@ -553,10 +559,10 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
                   : mfa
                       ? (qr == null
                           ? 'One more layer of security.'
-                          : 'Secure your ledger.')
+                          : 'Secure your budget.')
                       : resetMode
                           ? 'Reset your password'
-                          : 'Welcome to your ledger.',
+                          : "Welcome to Ben's Budgeteering.",
               style: Theme.of(context).textTheme.headlineLarge),
           const SizedBox(height: 14),
           Text(
@@ -725,6 +731,7 @@ class LedgerShell extends StatefulWidget {
 
 class _LedgerShellState extends State<LedgerShell> {
   int page = 0;
+  bool _sidebarCollapsed = false;
   bool loading = true;
   bool working = false;
   String? error;
@@ -737,6 +744,7 @@ class _LedgerShellState extends State<LedgerShell> {
   late String month;
   List<Json> accounts = [],
       transactions = [],
+      balanceSnapshots = [],
       categories = [],
       budgets = [],
       batches = [];
@@ -752,7 +760,7 @@ class _LedgerShellState extends State<LedgerShell> {
     'Overview',
     'Accounts',
     'Transactions',
-    'Budgets',
+    'Group manager',
     'Import & export',
     'Budgeteer'
   ];
@@ -760,7 +768,7 @@ class _LedgerShellState extends State<LedgerShell> {
     Icons.grid_view_outlined,
     Icons.account_balance_outlined,
     Icons.swap_vert,
-    Icons.pie_chart_outline,
+    Icons.folder_copy_outlined,
     Icons.file_upload_outlined,
     Icons.view_agenda_outlined
   ];
@@ -824,6 +832,7 @@ class _LedgerShellState extends State<LedgerShell> {
       if (!mounted) return;
       final annotations = {for (final a in results[3]) a['transaction_id']: a};
       setState(() {
+        balanceSnapshots = snapshots;
         categories = results[4];
         budgets = results[5];
         batches = results[6];
@@ -839,7 +848,7 @@ class _LedgerShellState extends State<LedgerShell> {
           return {
             ...a,
             'type': a['kind'],
-            'balance_minor': latest?['current_minor'],
+            'balance_minor': latest == null ? null : accountBalance(a, latest),
             'balance_at': latest?['observed_at']
           };
         }).toList();
@@ -888,223 +897,374 @@ class _LedgerShellState extends State<LedgerShell> {
   @override
   Widget build(BuildContext context) => LayoutBuilder(builder: (context, size) {
         final wide = size.maxWidth >= 1000;
+        final collapsed = wide && _sidebarCollapsed;
+        final footer = Text(
+            'USD only  /  $timezone  /  Posted activity  /  No rollover\nBank transaction dates use provider calendar dates; balances reflect their observation date.',
+            style: const TextStyle(fontSize: 11, color: muted));
         final navigation = SingleChildScrollView(
             child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-              const Padding(
-                  padding: EdgeInsets.fromLTRB(28, 38, 28, 42),
-                  child: FittedBox(
+              if (wide)
+                Align(
+                    alignment:
+                        collapsed ? Alignment.center : Alignment.centerRight,
+                    child: IconButton(
+                        tooltip:
+                            collapsed ? 'Expand sidebar' : 'Collapse sidebar',
+                        color: Colors.white70,
+                        onPressed: () => setState(
+                            () => _sidebarCollapsed = !_sidebarCollapsed),
+                        icon: Icon(collapsed
+                            ? Icons.keyboard_double_arrow_right
+                            : Icons.keyboard_double_arrow_left))),
+              ClipRect(
+                  child: OverflowBox(
+                      fit: OverflowBoxFit.deferToChild,
+                      minWidth: wide ? 242 : 304,
+                      maxWidth: wide ? 242 : 304,
                       alignment: Alignment.centerLeft,
-                      fit: BoxFit.scaleDown,
-                      child: Brand(light: true))),
-              const Padding(
-                  padding: EdgeInsets.only(left: 30, bottom: 12),
-                  child: Text('WORKSPACE',
-                      style: TextStyle(
-                          fontSize: 10,
-                          letterSpacing: 2,
-                          color: Color(0xff8daba2)))),
+                      child: SizedBox(
+                          width: wide ? 242 : 304,
+                          child: Visibility(
+                              visible: !collapsed,
+                              maintainSize: true,
+                              maintainAnimation: true,
+                              maintainState: true,
+                              child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    const Padding(
+                                        padding:
+                                            EdgeInsets.fromLTRB(28, 38, 28, 42),
+                                        child: FittedBox(
+                                            alignment: Alignment.centerLeft,
+                                            fit: BoxFit.scaleDown,
+                                            child: Brand(light: true))),
+                                    const Padding(
+                                        padding: EdgeInsets.only(
+                                            left: 30, bottom: 12),
+                                        child: Text('WORKSPACE',
+                                            style: TextStyle(
+                                                fontSize: 10,
+                                                letterSpacing: 2,
+                                                color: Color(0xff8daba2)))),
+                                  ]))))),
+              Padding(
+                  padding: EdgeInsets.symmetric(
+                      horizontal: collapsed ? 8 : 22, vertical: 6),
+                  child: SizedBox(
+                      height: 48, child: monthPicker(collapsed: collapsed))),
               for (var i = 0; i < pages.length; i++)
                 Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
-                    child: ListTile(
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10)),
-                      selected: page == i,
-                      selectedTileColor: const Color(0xff254740),
-                      leading: Icon(icons[i],
-                          color: page == i
-                              ? const Color(0xffc3e9b1)
-                              : const Color(0xff9eb8af)),
-                      title: Text(pages[i],
-                          style: TextStyle(
-                              color: page == i
-                                  ? Colors.white
-                                  : const Color(0xffb4c9c1),
-                              fontSize: 14)),
-                      onTap: () {
-                        setState(() => page = i);
-                        if (!wide) Navigator.pop(context);
-                      },
-                    )),
+                    padding: EdgeInsets.symmetric(
+                        horizontal: collapsed ? 8 : 14, vertical: 3),
+                    child: collapsed
+                        ? SizedBox(
+                            height: 56,
+                            child: IconButton(
+                                tooltip: pages[i],
+                                isSelected: page == i,
+                                style: IconButton.styleFrom(
+                                    backgroundColor: page == i
+                                        ? const Color(0xff254740)
+                                        : Colors.transparent,
+                                    foregroundColor: page == i
+                                        ? const Color(0xffc3e9b1)
+                                        : const Color(0xff9eb8af)),
+                                onPressed: () => setState(() => page = i),
+                                icon: Icon(icons[i])))
+                        : ListTile(
+                            minTileHeight: 56,
+                            minVerticalPadding: 0,
+                            titleAlignment: ListTileTitleAlignment.center,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                            selected: page == i,
+                            selectedTileColor: const Color(0xff254740),
+                            leading: Icon(icons[i],
+                                color: page == i
+                                    ? const Color(0xffc3e9b1)
+                                    : const Color(0xff9eb8af)),
+                            title: Text(pages[i],
+                                style: TextStyle(
+                                    color: page == i
+                                        ? Colors.white
+                                        : const Color(0xffb4c9c1),
+                                    fontSize: 14)),
+                            onTap: () {
+                              setState(() => page = i);
+                              if (!wide) Navigator.pop(context);
+                            },
+                          )),
               const SizedBox(height: 36),
-              Container(
-                  margin: const EdgeInsets.all(22),
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                      border: Border.all(color: const Color(0xff35534a)),
-                      borderRadius: BorderRadius.circular(12)),
-                  child: const Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(Icons.shield_outlined, color: Color(0xffb7e0b8)),
-                        SizedBox(height: 10),
-                        Text('Just your eyes.',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold)),
-                        SizedBox(height: 6),
-                        Text('MFA protected. No offline financial storage.',
-                            style: TextStyle(
-                                color: Color(0xff9eb8af), fontSize: 12)),
-                      ])),
-              ListTile(
-                  leading: const Icon(Icons.logout, color: Colors.white70),
-                  title: const Text('Sign out',
-                      style: TextStyle(color: Colors.white70)),
-                  onTap: widget.onLogout),
+              ClipRect(
+                  child: OverflowBox(
+                      fit: OverflowBoxFit.deferToChild,
+                      minWidth: wide ? 242 : 304,
+                      maxWidth: wide ? 242 : 304,
+                      alignment: Alignment.centerLeft,
+                      child: SizedBox(
+                          width: wide ? 242 : 304,
+                          child: Visibility(
+                              visible: !collapsed,
+                              maintainSize: true,
+                              maintainAnimation: true,
+                              maintainState: true,
+                              child: Container(
+                                  margin: const EdgeInsets.all(22),
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                      border: Border.all(
+                                          color: const Color(0xff35534a)),
+                                      borderRadius: BorderRadius.circular(12)),
+                                  child: const Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Icon(Icons.shield_outlined,
+                                            color: Color(0xffb7e0b8)),
+                                        SizedBox(height: 10),
+                                        Text('Just your eyes.',
+                                            style: TextStyle(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.bold)),
+                                        SizedBox(height: 6),
+                                        Text(
+                                            'MFA protected. No offline financial storage.',
+                                            style: TextStyle(
+                                                color: Color(0xff9eb8af),
+                                                fontSize: 12)),
+                                      ])))))),
+              if (collapsed)
+                SizedBox(
+                    height: 56,
+                    child: IconButton(
+                        tooltip: 'Sign out',
+                        color: Colors.white70,
+                        onPressed: widget.onLogout,
+                        icon: const Icon(Icons.logout)))
+              else
+                ListTile(
+                    minTileHeight: 56,
+                    minVerticalPadding: 0,
+                    titleAlignment: ListTileTitleAlignment.center,
+                    leading: const Icon(Icons.logout, color: Colors.white70),
+                    title: const Text('Sign out',
+                        style: TextStyle(color: Colors.white70)),
+                    onTap: widget.onLogout),
               const SizedBox(height: 20),
             ]));
         return Scaffold(
           drawer: wide ? null : Drawer(backgroundColor: ink, child: navigation),
           appBar: wide
               ? null
-              : AppBar(title: const Brand(), backgroundColor: canvas, actions: [
-                  IconButton(
-                      tooltip: 'Sign out',
-                      onPressed: widget.onLogout,
-                      icon: const Icon(Icons.logout))
-                ]),
-          body: Row(children: [
+              : AppBar(
+                  title: const Brand(light: true),
+                  backgroundColor: canvas,
+                  actions: [
+                      IconButton(
+                          tooltip: 'Sign out',
+                          onPressed: widget.onLogout,
+                          icon: const Icon(Icons.logout))
+                    ]),
+          body: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             if (wide)
               SizedBox(
-                  width: 242, child: Material(color: ink, child: navigation)),
+                  width: collapsed ? 72 : 242,
+                  child: Material(
+                      color: ink,
+                      child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          child: navigation))),
             Expanded(
                 child: Column(children: [
-              if (wide)
-                Container(
-                    height: 77,
-                    padding: const EdgeInsets.symmetric(horizontal: 36),
-                    decoration: const BoxDecoration(
-                        color: Colors.white,
-                        border: Border(
-                            bottom: BorderSide(color: Color(0xffe2e8df)))),
-                    child: Row(children: [
-                      Text('YOUR PRIVATE WORKSPACE',
-                          style: TextStyle(
-                              fontSize: 10, letterSpacing: 2, color: muted)),
-                      const Spacer(),
-                      const Icon(Icons.verified_user_outlined,
-                          size: 16, color: teal),
-                      const SizedBox(width: 8),
-                      const Text('Owner / MFA verified',
-                          style: TextStyle(fontSize: 12, color: muted)),
-                    ])),
               Expanded(
                   child: RefreshIndicator(
                       onRefresh: load,
-                      child: ListView(
-                          padding: EdgeInsets.all(wide ? 36 : 20),
-                          children: [
-                            Wrap(
-                                alignment: WrapAlignment.spaceBetween,
-                                crossAxisAlignment: WrapCrossAlignment.center,
-                                spacing: 24,
-                                runSpacing: 16,
-                                children: [
-                                  Column(
+                      child: page == 5 && !loading && error == null
+                          ? Padding(
+                              padding: EdgeInsets.symmetric(
+                                  horizontal: wide ? 36 : 20,
+                                  vertical: wide ? 18 : 10),
+                              child: BudgeteerPage(
+                                  key: ValueKey(month),
+                                  repository: repo,
+                                  month: month,
+                                  transactions: transactions,
+                                  toolbar: working
+                                      ? const LinearProgressIndicator()
+                                      : null,
+                                  footer: footer))
+                          : ListView(
+                              padding: EdgeInsets.all(wide ? 36 : 20),
+                              children: [
+                                  Wrap(
+                                      alignment: WrapAlignment.spaceBetween,
                                       crossAxisAlignment:
-                                          CrossAxisAlignment.start,
+                                          WrapCrossAlignment.center,
+                                      spacing: 24,
+                                      runSpacing: 16,
                                       children: [
-                                        Text(pages[page],
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .headlineLarge),
-                                        const SizedBox(height: 7),
-                                        Text(
-                                            [
-                                              'The big picture, with the details that matter.',
-                                              'A clear view of what you hold and owe.',
-                                              'Every movement, in context.',
-                                              'Give your spending a little direction.',
-                                              'Bring your history. Keep control of your data.',
-                                              'Shape your deposits into a plan.'
-                                            ][page],
-                                            style:
-                                                const TextStyle(color: muted))
+                                        if (page != 5)
+                                          Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(pages[page],
+                                                    style: Theme.of(context)
+                                                        .textTheme
+                                                        .headlineLarge
+                                                        ?.copyWith(
+                                                            color:
+                                                                darkSurfaceTitle)),
+                                                const SizedBox(height: 7),
+                                                Text(
+                                                    [
+                                                      'The big picture, with the details that matter.',
+                                                      'A clear view of what you hold and owe.',
+                                                      'Every movement, in context.',
+                                                      'Manage the shared groups used in Budgeteer.',
+                                                      'Bring your history. Keep control of your data.',
+                                                      'Shape your deposits into a plan.'
+                                                    ][page],
+                                                    style: const TextStyle(
+                                                        color: muted))
+                                              ]),
                                       ]),
-                                  Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        IconButton(
-                                            onPressed: settings,
-                                            tooltip: 'Reporting settings',
-                                            icon: const Icon(Icons.tune)),
-                                        IconButton(
-                                            onPressed: loading ? null : load,
-                                            tooltip: 'Refresh data',
-                                            icon: const Icon(Icons.refresh)),
-                                        if (page == 0 ||
-                                            page == 2 ||
-                                            page == 3 ||
-                                            page == 5)
-                                          monthPicker()
-                                      ]),
-                                ]),
-                            const SizedBox(height: 28),
-                            if (working) const LinearProgressIndicator(),
-                            if (error != null)
-                              panel(
-                                  child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                    const Text('Data is unavailable',
-                                        style: TextStyle(
-                                            fontWeight: FontWeight.bold)),
-                                    const SizedBox(height: 8),
-                                    Text(error!),
-                                    TextButton(
-                                        onPressed: load,
-                                        child: const Text('Try again'))
-                                  ])),
-                            if (loading)
-                              const Padding(
-                                  padding: EdgeInsets.all(60),
-                                  child: Center(
-                                      child: CircularProgressIndicator()))
-                            else if (error == null)
-                              switch (page) {
-                                0 =>
-                                  overview(size.maxWidth - (wide ? 314 : 40)),
-                                1 => accountsPage(),
-                                2 => transactionsPage(),
-                                3 => budgetsPage(),
-                                4 => importsPage(),
-                                _ => BudgeteerPage(
-                                    key: ValueKey(month),
-                                    repository: repo,
-                                    month: month,
-                                    transactions: transactions)
-                              },
-                            const SizedBox(height: 28),
-                            Text(
-                                'USD only  /  $timezone  /  Posted activity  /  No rollover\nBank transaction dates use provider calendar dates; balances reflect their observation date.',
-                                style: const TextStyle(
-                                    fontSize: 11, color: muted)),
-                          ]))),
+                                  const SizedBox(height: 28),
+                                  if (working) const LinearProgressIndicator(),
+                                  if (error != null)
+                                    panel(
+                                        child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                          const Text('Data is unavailable',
+                                              style: TextStyle(
+                                                  fontWeight: FontWeight.bold)),
+                                          const SizedBox(height: 8),
+                                          Text(error!),
+                                          TextButton(
+                                              onPressed: load,
+                                              child: const Text('Try again'))
+                                        ])),
+                                  if (loading)
+                                    const Padding(
+                                        padding: EdgeInsets.all(60),
+                                        child: Center(
+                                            child: CircularProgressIndicator()))
+                                  else if (error == null)
+                                    switch (page) {
+                                      0 => overview(
+                                          size.maxWidth - (wide ? 314 : 40)),
+                                      1 => accountsPage(),
+                                      2 => transactionsPage(),
+                                      3 => BudgeteerPage(
+                                          key: ValueKey('groups-$month'),
+                                          repository: repo,
+                                          month: month,
+                                          transactions: transactions,
+                                          groupsOnly: true),
+                                      4 => importsPage(),
+                                      _ => BudgeteerPage(
+                                          key: ValueKey(month),
+                                          repository: repo,
+                                          month: month,
+                                          transactions: transactions)
+                                    },
+                                  const SizedBox(height: 28),
+                                  footer,
+                                ]))),
             ])),
           ]),
         );
       });
 
-  Widget monthPicker() => OutlinedButton.icon(
-      onPressed: () async {
-        final date = await showDatePicker(
-            context: context,
-            initialDate: DateTime.parse('$month-01'),
-            firstDate: DateTime(2000),
-            lastDate: DateTime(2100),
-            helpText: 'Choose any day in the reporting month');
-        if (date != null && mounted) {
-          setState(() =>
-              month = '${date.year}-${date.month.toString().padLeft(2, '0')}');
-        }
-      },
-      icon: const Icon(Icons.calendar_today_outlined, size: 16),
-      label: Text(month));
+  Widget monthPicker({required bool collapsed}) {
+    final label = MaterialLocalizations.of(context)
+        .formatMonthYear(DateTime.parse('$month-01'));
+    return Tooltip(
+      message: 'Choose reporting month: $label',
+      child: collapsed
+          ? IconButton(
+              onPressed: chooseMonth,
+              color: const Color(0xffc3e9b1),
+              icon: const Icon(Icons.calendar_today_outlined, size: 18))
+          : OutlinedButton.icon(
+              onPressed: chooseMonth,
+              style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xffc3e9b1),
+                  side: const BorderSide(color: Color(0xff35534a))),
+              icon: const Icon(Icons.calendar_today_outlined, size: 16),
+              label: Text(month)),
+    );
+  }
+
+  Future<void> chooseMonth() async {
+    final initial = DateTime.parse('$month-01');
+    var year = initial.year;
+    final date = await showDialog<DateTime>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+            builder: (context, update) => AlertDialog(
+                  title: const Text('Choose reporting month'),
+                  content: SizedBox(
+                      width: 320,
+                      child: SingleChildScrollView(
+                          child:
+                              Column(mainAxisSize: MainAxisSize.min, children: [
+                        DropdownButtonFormField<int>(
+                            initialValue: year,
+                            decoration:
+                                const InputDecoration(labelText: 'Year'),
+                            items: [
+                              for (var value = 2000; value <= 2100; value++)
+                                DropdownMenuItem(
+                                    value: value, child: Text('$value')),
+                            ],
+                            onChanged: (value) {
+                              if (value != null) {
+                                update(() => year = value);
+                              }
+                            }),
+                        const SizedBox(height: 16),
+                        GridView.count(
+                            crossAxisCount: 3,
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            childAspectRatio: 2,
+                            children: [
+                              for (var index = 1; index <= 12; index++)
+                                TextButton(
+                                    style: TextButton.styleFrom(
+                                        backgroundColor: year == initial.year &&
+                                                index == initial.month
+                                            ? Theme.of(context)
+                                                .colorScheme
+                                                .primaryContainer
+                                            : null),
+                                    onPressed: () => Navigator.pop(
+                                        dialogContext, DateTime(year, index)),
+                                    child: Text(MaterialLocalizations.of(
+                                            context)
+                                        .formatMonthYear(DateTime(year, index))
+                                        .replaceFirst('$year', '')
+                                        .trim())),
+                            ]),
+                      ]))),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(dialogContext),
+                        child: const Text('Cancel')),
+                  ],
+                )));
+    if (date != null && mounted) {
+      setState(() =>
+          month = '${date.year}-${date.month.toString().padLeft(2, '0')}');
+    }
+  }
 
   Widget panel({required Widget child}) =>
       Card(child: Padding(padding: const EdgeInsets.all(24), child: child));
@@ -1185,65 +1345,16 @@ class _LedgerShellState extends State<LedgerShell> {
       ]),
       const SizedBox(height: 20),
       if (accounts.isEmpty)
-        empty('Your ledger starts here',
+        empty('Your budget starts here',
             'Add a manual account, record a dated balance, then import your transactions. No sample balances are shown.',
             action: FilledButton.icon(
                 onPressed: addAccount,
                 icon: const Icon(Icons.add),
                 label: const Text('Add your first account')))
-      else ...[
-        panel(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          sectionTitle('Spending by category', 'Posted activity for $month'),
-          const SizedBox(height: 22),
-          if (summary.categories.isEmpty)
-            const Text('No categorized spending in this month.',
-                style: TextStyle(color: muted)),
-          for (final entry
-              in summary.categories.entries.where((e) => e.value > 0))
-            Padding(
-                padding: const EdgeInsets.only(bottom: 18),
-                child: Column(children: [
-                  Row(children: [
-                    Text(categoryName(entry.key)),
-                    const Spacer(),
-                    Text(money(entry.value),
-                        style: const TextStyle(fontWeight: FontWeight.w600))
-                  ]),
-                  const SizedBox(height: 8),
-                  ClipRRect(
-                      borderRadius: BorderRadius.circular(5),
-                      child: LinearProgressIndicator(
-                          minHeight: 8,
-                          value: summary.spending <= 0
-                              ? 0
-                              : (entry.value / summary.spending).clamp(0, 1),
-                          backgroundColor: canvas,
-                          color: teal)),
-                ])),
-        ])),
-        const SizedBox(height: 20),
-        panel(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          sectionTitle('Account coverage',
-              'Missing or stale snapshots are not assumed to be zero.'),
-          const SizedBox(height: 12),
-          for (final a in accounts) accountRow(a)
-        ])),
-      ],
-      const SizedBox(height: 20),
-      panel(
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        sectionTitle(
-            'Recent activity', 'Latest loaded posted and pending entries'),
-        const SizedBox(height: 16),
-        if (transactions.isEmpty)
-          const Text('No transactions yet.', style: TextStyle(color: muted)),
-        for (final t in transactions.take(5)) transactionRow(t)
-      ])),
+      else
+        FinancialHistoryChart(
+            history: financialHistory(accounts, balanceSnapshots, transactions,
+                now: DateTime.now())),
     ]);
   }
 
@@ -1322,25 +1433,6 @@ class _LedgerShellState extends State<LedgerShell> {
         if (connectionNotice != null) Text(connectionNotice!),
         if (pendingError != null)
           Text(pendingError!, style: const TextStyle(color: Colors.deepOrange)),
-        if (pendingConnections.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          const Text('Unfinished bank connections',
-              style: TextStyle(fontWeight: FontWeight.w600)),
-          const Text(
-              'Retry completion of the existing consent before starting another link. Daily feeds may incur ongoing charges; balances are not fetched automatically.'),
-          for (final session in pendingConnections)
-            Wrap(
-                spacing: 12,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Text('${session['createdAt']} / ${session['status']}'),
-                  OutlinedButton(
-                      onPressed: working || loading
-                          ? null
-                          : () => retryConnection(session),
-                      child: const Text('Retry completion')),
-                ]),
-        ],
         if (!bankLinkingEnabled)
           const Text(
               'Bank linking is disabled. CSV imports and manual snapshots are available. Live linking requires owner approval and verified institution coverage.',
@@ -1740,7 +1832,7 @@ class _LedgerShellState extends State<LedgerShell> {
                   perform(() async {
                     final result = await repo.api('export', get: true);
                     await platform.download(
-                        'ledger-export-${DateTime.now().toIso8601String().substring(0, 10)}.json',
+                        'bens-budgeteering-export-${DateTime.now().toIso8601String().substring(0, 10)}.json',
                         const JsonEncoder.withIndent('  ').convert(result));
                   }, success: 'Export downloaded. Keep it private.');
                 }
@@ -1882,29 +1974,6 @@ class _LedgerShellState extends State<LedgerShell> {
     name.dispose();
     institution.dispose();
     lastFour.dispose();
-  }
-
-  Future<void> settings() async {
-    final zone = TextEditingController(text: timezone);
-    await form('Reporting settings', [
-      const Text(
-          'Currency: USD. Budgets do not roll over. This version supports America/Denver only. Bank dates are normalized by the backend; changing your device timezone does not rewrite them.'),
-      TextField(
-          controller: zone,
-          readOnly: true,
-          decoration: const InputDecoration(labelText: 'Reporting timezone')),
-    ], () async {
-      if (zone.text.trim() != 'America/Denver') {
-        throw const FormatException(
-            'This version supports America/Denver only.');
-      }
-      await repo.client.from('profiles').upsert({
-        'owner_id': repo.client.auth.currentUser!.id,
-        'currency': 'USD',
-        'reporting_timezone': zone.text.trim()
-      });
-    });
-    zone.dispose();
   }
 
   Future<void> snapshot(Json account) async {
@@ -2126,38 +2195,6 @@ class _LedgerShellState extends State<LedgerShell> {
       if (mounted) setState(() => connectionNotice = safeMessage(e));
     } finally {
       session?.clear();
-      if (mounted) {
-        await load();
-        if (mounted) {
-          setState(() {
-            working = false;
-            connectionProgress = null;
-          });
-        }
-      }
-    }
-  }
-
-  Future<void> retryConnection(Json session) async {
-    if (!await confirm('Retry bank completion?',
-        'Uses your existing bank consent, not a new link. Daily transaction feeds may incur ongoing charges. No paid balance refresh is requested.')) {
-      return;
-    }
-    if (!mounted || working) return;
-    final owner = repo.authenticatedOwner;
-    setState(() {
-      working = true;
-      connectionNotice = null;
-      connectionProgress = 'Retrying bank completion...';
-    });
-    try {
-      final result =
-          await repo.completeConnection(session['sessionId'] as String, owner);
-      if (!mounted) return;
-      setState(() => connectionNotice = completionMessage(result));
-    } catch (e) {
-      if (mounted) setState(() => connectionNotice = safeMessage(e));
-    } finally {
       if (mounted) {
         await load();
         if (mounted) {

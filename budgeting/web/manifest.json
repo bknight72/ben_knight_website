@@ -1,6 +1,6 @@
 {
-  "name": "Ledger Private Budgeting",
-  "short_name": "Ledger",
+  "name": "Ben's Budgeteering",
+  "short_name": "Ben's Budgeteering",
   "description": "Private single-owner budgeting. Built at Novacoast.",
   "start_url": ".",
   "display": "browser",
