@@ -128,6 +128,65 @@ Deno.test("API owner and aal2 required after verified GoTrue identity", async ()
   }
   equal(denied, true);
 });
+Deno.test("portable export includes owner-scoped source exclusions and unchanged financial tables", async () => {
+  const db = new MockDB();
+  const tables: string[] = [];
+  const exclusion = {
+    id: "30000000-0000-4000-8000-000000000001",
+    owner_id: owner,
+    month: "2026-11-01",
+    source_transaction_id: "20000000-0000-4000-8000-000000000001",
+  };
+  db.all = async (table, query) => {
+    equal(query, `&owner_id=eq.${owner}`);
+    tables.push(table);
+    return table === "budgeteer_source_exclusions" ? [exclusion] : [];
+  };
+  const response = await handle(request("/api/v1/export"), db);
+  equal(response.status, 200);
+  const data = await response.json();
+  equal(data.version, 1);
+  equal(data.budgeteer_source_exclusions, [exclusion]);
+  equal(tables, [
+    "profiles",
+    "accounts",
+    "balance_snapshots",
+    "transactions",
+    "transaction_annotations",
+    "categories",
+    "monthly_budgets",
+    "import_batches",
+    "budgeteer_plans",
+    "budgeteer_groups",
+    "budgeteer_entries",
+    "budgeteer_labels",
+    "budgeteer_entry_labels",
+    "budgeteer_source_exclusions",
+  ]);
+  const schema =
+    await (await handle(request("/openapi.json", undefined, false), db)).json();
+  equal(
+    schema.components.schemas.BudgeteerState.properties.excluded_source_count
+      .minimum,
+    0,
+  );
+  equal(
+    schema.components.schemas.BudgeteerMutation.properties.p_operation.enum
+      .includes("sources_include"),
+    true,
+  );
+  equal(
+    schema.components.schemas.BudgeteerMutation.properties.p_operation.enum
+      .includes("sources_restore"),
+    true,
+  );
+  equal(
+    schema.paths["/api/v1/export"].get.responses["200"]
+      .content["application/json"].schema.properties.budgeteer_source_exclusions
+      .items.$ref,
+    "#/components/schemas/BudgeteerSourceExclusion",
+  );
+});
 Deno.test("commit revalidates CSV, requires overlap confirmation, rejects provider overlap", async () => {
   const db = new MockDB();
   const payload = {

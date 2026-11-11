@@ -20,6 +20,7 @@ Json response({List<Json> entries = const [], List<Json> groups = const []}) =>
       'groups': groups,
       'labels': [],
       'entry_labels': [],
+      'excluded_source_count': 0,
     };
 
 void main() {
@@ -139,6 +140,10 @@ void main() {
     for (final value in <Json>[
       {},
       {...response(), 'entries': null},
+      {...response(), 'excluded_source_count': -1},
+      {...response(), 'excluded_source_count': '1'},
+      {...response(), 'excluded_source_count': null},
+      {...response(), 'plan': null, 'excluded_source_count': 1},
       {
         ...response(),
         'groups': [null]
@@ -166,5 +171,9 @@ void main() {
       expect(() => BudgeteerState.fromJson(value), throwsFormatException);
     }
     expect(BudgeteerState.fromJson({...response(), 'plan': null}).revision, 0);
+    expect(
+        BudgeteerState.fromJson({...response(), 'excluded_source_count': 2})
+            .excludedSourceCount,
+        2);
   });
 }

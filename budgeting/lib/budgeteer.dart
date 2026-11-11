@@ -74,11 +74,17 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
     final generation = ++_generation;
     setState(() {
       _loading = true;
+      _loaded = false;
       _error = null;
       _saved = false;
     });
     try {
-      final result = await widget.repository.budgeteerRead(widget.month);
+      final repository = widget.repository;
+      final month = widget.month;
+      final existing = await repository.budgeteerRead(month);
+      if (!mounted || generation != _generation) return;
+      final result = await repository
+          .budgeteerMutate(month, existing.revision, 'sources_include', {});
       if (!mounted || generation != _generation) return;
       setState(() {
         _state = result;
@@ -87,9 +93,14 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
         _retryOperation = null;
         _retryPayload = null;
       });
-    } catch (_) {
+    } catch (error) {
       if (!mounted || generation != _generation) return;
-      setState(() => _error = 'Could not load this plan. Please retry.');
+      setState(() {
+        _conflict = error.toString().contains('budgeteer_conflict');
+        _error = _conflict
+            ? 'This plan changed elsewhere. Reload to include all transactions.'
+            : 'Could not load this plan. Please retry.';
+      });
     } finally {
       if (mounted && generation == _generation) {
         setState(() => _loading = false);
@@ -230,7 +241,9 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
         ],
       ),
       const SizedBox(height: 12),
-      const Text('Plan with pooled deposits. Bank transactions stay untouched.',
+      const Text(
+          'All eligible deposits and withdrawals this month, across all accounts. '
+          'Remove any you do not want to include. Bank transactions stay untouched.',
           style: TextStyle(color: _muted)),
       const SizedBox(height: 20),
       if (_loading)
@@ -263,7 +276,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
             )),
         const SizedBox(height: 16),
       ],
-      if (!_loading) ...[
+      if (!_loading && _loaded) ...[
         LayoutBuilder(builder: (context, constraints) {
           final width = constraints.maxWidth;
           final items = [
@@ -296,6 +309,20 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
               onPressed: _disabled ? null : _labelsDialog,
               icon: const Icon(Icons.sell_outlined),
               label: const Text('Manage labels')),
+          if (_state.excludedSourceCount > 0)
+            TextButton.icon(
+                onPressed: _disabled
+                    ? null
+                    : () => _confirm(
+                        'Restore excluded transactions?',
+                        'Include removed bank transactions again if they are still '
+                            'eligible this month. Unlinked sources can also be added '
+                            'again alongside their independent planning items.',
+                        'sources_restore',
+                        {}),
+                icon: const Icon(Icons.restore),
+                label: Text(
+                    'Restore excluded transactions (${_state.excludedSourceCount})')),
         ]),
         const SizedBox(height: 24),
         LayoutBuilder(builder: (context, constraints) {
@@ -706,7 +733,8 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                     ? null
                     : () => _confirm(
                         'Remove withdrawal?',
-                        'Only this planning item is removed. Its bank source is untouched.',
+                        'Remove this item from the plan. Its bank source stays '
+                            'untouched and will not be added back automatically this month.',
                         'entry_delete',
                         {'id': entry['id']}),
                 icon: const Icon(Icons.delete_outline, size: 18)),
@@ -766,7 +794,8 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                     ? null
                     : () => _confirm(
                         'Unlink bank source?',
-                        'Keep this planning item and its independent amount.',
+                        'Keep this planning item and its independent amount. '
+                            'The bank source will not be added again automatically this month.',
                         'source_unlink',
                         {'id': entry['id']}),
                 child: const Text('Unlink source')),
@@ -784,13 +813,15 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                   fontSize: 18, color: _ink, fontWeight: FontWeight.w700)),
           const SizedBox(height: 4),
           const Text(
-              'Explicit planning deposits, not an account balance or automatic import.',
+              'Eligible deposits from all accounts are included by default. '
+              'This is a funding plan, not an account balance.',
               style: TextStyle(color: _muted, fontSize: 12)),
           if (_state.deposits.isEmpty)
             const Padding(
                 padding: EdgeInsets.symmetric(vertical: 20),
                 child: Text(
-                    'Start with a deposit. Nothing is added automatically.',
+                    'No included deposits this month. Add a planning deposit '
+                    'or restore excluded transactions.',
                     style: TextStyle(color: _muted))),
           for (final entry in _state.deposits)
             Padding(
@@ -821,7 +852,8 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                                 ? null
                                 : () => _confirm(
                                     'Remove deposit?',
-                                    'This reduces plan capacity. Bank transactions remain unchanged.',
+                                    'This reduces plan capacity. Its bank source stays '
+                                        'untouched and will not be added back automatically this month.',
                                     'entry_delete',
                                     {'id': entry['id']}),
                             icon: const Icon(Icons.delete_outline, size: 18)),
@@ -877,6 +909,8 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
         final sources = widget.transactions
             .where((row) =>
                 eligibleBudgeteerSource(row, kind) &&
+                '${row['posted_date'] ?? row['transaction_date'] ?? ''}'
+                    .startsWith('$month-') &&
                 !_state.entries.any((existing) =>
                     existing['id'] != entry?['id'] &&
                     existing['source_transaction_id'] == row['id']))

@@ -60,6 +60,23 @@ do $$ begin
 end $$;
 select dblink_disconnect('budgeteer_a');
 select dblink_disconnect('budgeteer_b');
+insert into public.transactions(owner_id,account_id,source,source_id,amount_minor,description,transaction_date,status)
+ values('00000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','csv','include-race',-123,'Race','2027-01-01','posted');
+select dblink_connect('budgeteer_a','dbname='||current_database()||' user=postgres');
+select dblink_connect('budgeteer_b','dbname='||current_database()||' user=postgres');
+select dblink_send_query('budgeteer_a',$q$select public.budgeteer_test_write('2027-01-01',0,'sources_include','{}',true)$q$);
+select dblink_send_query('budgeteer_b',$q$select public.budgeteer_test_write('2027-01-01',0,'sources_include','{}',true)$q$);
+truncate budgeteer_results;
+insert into budgeteer_results select * from dblink_get_result('budgeteer_a') as t(result text);
+insert into budgeteer_results select * from dblink_get_result('budgeteer_b') as t(result text);
+do $$ begin
+ if (select count(*) from budgeteer_results where result='saved')<>1 or (select count(*) from budgeteer_results where result='budgeteer_conflict')<>1 then raise exception 'concurrent source inclusion did not conflict atomically'; end if;
+ if (select count(*) from public.budgeteer_entries e join public.budgeteer_plans p on p.id=e.plan_id where p.month='2027-01-01')<>1 then raise exception 'concurrent inclusion duplicated sources'; end if;
+end $$;
+select dblink_disconnect('budgeteer_a');
+select dblink_disconnect('budgeteer_b');
+select public.budgeteer_test_write('2027-01-01',1,'sources_include','{}');
+do $$ begin if (select revision from public.budgeteer_plans where month='2027-01-01')<>1 then raise exception 'retry inclusion was not idempotent'; end if; end $$;
 drop function public.budgeteer_test_write(date,bigint,text,jsonb,boolean);
 delete from public.budgeteer_plans;
 delete from public.budgeteer_labels;

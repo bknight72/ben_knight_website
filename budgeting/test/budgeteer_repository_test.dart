@@ -18,7 +18,8 @@ void main() {
             'entries': [],
             'groups': [],
             'labels': [],
-            'entry_labels': []
+            'entry_labels': [],
+            'excluded_source_count': 0
           }),
           200,
           headers: {'content-type': 'application/json'},
@@ -39,6 +40,15 @@ void main() {
     });
     expect(() => repository.budgeteerRead('2026-13'), throwsFormatException);
     expect(requests.length, 2);
+    await repository.budgeteerMutate('2026-11', 3, 'sources_include', {});
+    expect(jsonDecode(requests.last.body), {
+      'p_month': '2026-11-01',
+      'p_revision': 3,
+      'p_operation': 'sources_include',
+      'p_payload': {}
+    });
+    await repository.budgeteerMutate('2026-11', 4, 'sources_restore', {});
+    expect(jsonDecode(requests.last.body)['p_operation'], 'sources_restore');
   });
 
   test('Budgeteer rejects malformed data and sanitizes database errors',

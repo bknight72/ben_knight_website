@@ -182,9 +182,64 @@ try {
     await page.getByText("Synthetic local cash", { exact: false }).count() > 0,
     "Real API fixture was not rendered",
   );
+  const includedSources = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === "/rest/v1/rpc/budgeteer_mutate" &&
+    response.request().method() === "POST" &&
+    response.request().postDataJSON().p_operation === "sources_include"
+  );
   await page.getByText("Budgeteer", { exact: true }).click();
   await page.getByText("Give every dollar a place.", { exact: false }).first()
     .waitFor();
+  const included = await includedSources;
+  assert.equal(included.status(), 200, "Default transaction inclusion failed");
+  const initialPlan = await included.json();
+  const automaticEntry = initialPlan.entries.find((entry) =>
+    entry.source_transaction_id != null
+  );
+  assert.ok(automaticEntry, "No bank transactions were included by default");
+  await page.getByRole("button", {
+    name: `Delete ${automaticEntry.name}`,
+    exact: true,
+  })
+    .click();
+  const removedSource = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === "/rest/v1/rpc/budgeteer_mutate" &&
+    response.request().postDataJSON()?.p_operation === "entry_delete"
+  );
+  await click("Confirm");
+  assert.equal((await removedSource).status(), 200, "Source exclusion failed");
+  await page.getByText("Overview", { exact: true }).click();
+  const reloadedSources = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === "/rest/v1/rpc/budgeteer_mutate" &&
+    response.request().postDataJSON()?.p_operation === "sources_include"
+  );
+  await page.getByText("Budgeteer", { exact: true }).click();
+  const reloadedPlan = await (await reloadedSources).json();
+  assert.ok(
+    !reloadedPlan.entries.some((entry) =>
+      entry.source_transaction_id === automaticEntry.source_transaction_id
+    ),
+    "Excluded source reappeared after navigation",
+  );
+  assert.equal(reloadedPlan.excluded_source_count, 1);
+  await page.getByRole("button", {
+    name: "Restore excluded transactions (1)",
+    exact: true,
+  })
+    .click();
+  const restoredSources = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === "/rest/v1/rpc/budgeteer_mutate" &&
+    response.request().postDataJSON()?.p_operation === "sources_restore"
+  );
+  await click("Confirm");
+  const restoredPlan = await (await restoredSources).json();
+  assert.ok(
+    restoredPlan.entries.some((entry) =>
+      entry.source_transaction_id === automaticEntry.source_transaction_id
+    ),
+    "Restoring excluded sources failed",
+  );
+  assert.equal(restoredPlan.excluded_source_count, 0);
   await click("Add deposit");
   await fill("Name", "Browser Budgeteer funding");
   await fill("Amount (USD)", "1200.00");

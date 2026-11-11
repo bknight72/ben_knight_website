@@ -16,6 +16,11 @@ class _Repository extends LedgerRepository {
   BudgeteerState state;
   Object? readError;
   Object? saveError;
+  Object? inclusionError;
+  Completer<BudgeteerState>? pendingInclusion;
+  List<Json> sources = [];
+  final excluded = <String>{};
+  final inclusions = <Json>[];
   Completer<BudgeteerState>? pending;
   final calls = <Json>[];
   final months = <String>[];
@@ -30,6 +35,12 @@ class _Repository extends LedgerRepository {
   @override
   Future<BudgeteerState> budgeteerMutate(
       String month, int revision, String operation, Json payload) async {
+    if (operation == 'sources_include') {
+      inclusions.add({'month': month, 'revision': revision});
+      if (inclusionError != null) throw inclusionError!;
+      if (pendingInclusion != null) return pendingInclusion!.future;
+      return _include(month);
+    }
     calls.add({
       'month': month,
       'revision': revision,
@@ -56,7 +67,13 @@ class _Repository extends LedgerRepository {
         assignments.add({'entry_id': id, 'label_id': label});
       }
     } else if (operation == 'entry_delete') {
+      final source = entries
+          .singleWhere((row) => row['id'] == id)['source_transaction_id'];
+      if (source != null) excluded.add('$source');
       entries.removeWhere((row) => row['id'] == id);
+    } else if (operation == 'sources_restore') {
+      excluded.clear();
+      return _include(month);
     } else if (operation == 'group_save') {
       groups.removeWhere((row) => row['id'] == id);
       groups.add({...payload, 'id': id, 'sort_position': groups.length});
@@ -100,7 +117,46 @@ class _Repository extends LedgerRepository {
       groups: groups,
       labels: labels,
       entryLabels: assignments,
+      excludedSourceCount: excluded.length,
     );
+  }
+
+  BudgeteerState _include(String month) {
+    final entries = [...state.entries];
+    for (final source in sources) {
+      final kind =
+          integer(source['amount_minor']) > 0 ? 'deposit' : 'withdrawal';
+      if (!eligibleBudgeteerSource(source, kind) ||
+          !'${source['posted_date'] ?? source['transaction_date'] ?? ''}'
+              .startsWith('$month-') ||
+          excluded.contains(source['id']) ||
+          entries.any((row) => row['source_transaction_id'] == source['id'])) {
+        continue;
+      }
+      entries.add({
+        ..._entry('entry-${source['id']}', '${source['description']}', kind,
+            integer(source['amount_minor']).abs(),
+            position: entries.length),
+        'source_transaction_id': source['id'],
+        'source_current': source,
+        'source_snapshot': source,
+        'source_state': 'linked',
+      });
+    }
+    return state = BudgeteerState(
+        plan: entries.isEmpty
+            ? state.plan
+            : {
+                'id': 'plan',
+                'month': month,
+                'revision': state.revision +
+                    (entries.length == state.entries.length ? 0 : 1),
+              },
+        entries: entries,
+        groups: state.groups,
+        labels: state.labels,
+        entryLabels: state.entryLabels,
+        excludedSourceCount: excluded.length);
   }
 }
 
@@ -166,6 +222,131 @@ Future<void> _tap(WidgetTester tester, Finder finder) async {
 }
 
 void main() {
+  testWidgets('all accounts populate automatically and removals survive reload',
+      (tester) async {
+    final repository = _Repository(const BudgeteerState.empty())
+      ..sources = [
+        {
+          'id': 'salary',
+          'account_id': 'checking',
+          'description': 'Salary',
+          'amount_minor': 20000,
+          'status': 'posted',
+          'posted_date': '2026-11-01'
+        },
+        {
+          'id': 'interest',
+          'account_id': 'savings',
+          'description': 'Interest',
+          'amount_minor': 100,
+          'status': 'posted',
+          'transaction_date': '2026-11-02'
+        },
+        {
+          'id': 'bill',
+          'account_id': 'card',
+          'description': 'Utility bill',
+          'amount_minor': -5000,
+          'status': 'posted',
+          'posted_date': '2026-11-03'
+        },
+        {
+          'id': 'old',
+          'description': 'Previous month',
+          'amount_minor': 99999,
+          'status': 'posted',
+          'posted_date': '2026-10-31'
+        },
+      ];
+    await _page(tester, repository);
+    expect(repository.state.deposits, hasLength(2));
+    expect(repository.state.withdrawals, hasLength(1));
+    expect(repository.state.allocation.deposits, 20100);
+    expect(repository.calls, isEmpty);
+    await _tap(tester, find.byTooltip('Delete Salary'));
+    await _tap(tester, find.text('Confirm'));
+    await _tap(tester, find.byTooltip('Delete Utility bill'));
+    await _tap(tester, find.text('Confirm'));
+    await tester.pumpWidget(const SizedBox());
+    repository.sources.add({
+      'id': 'new',
+      'account_id': 'savings',
+      'description': 'New deposit',
+      'amount_minor': 200,
+      'status': 'posted',
+      'posted_date': '2026-11-04'
+    });
+    await _page(tester, repository);
+    expect(repository.state.deposits, hasLength(2));
+    expect(repository.state.withdrawals, isEmpty);
+    expect(repository.state.allocation.deposits, 300);
+    expect(find.text('Salary'), findsNothing);
+    await _tap(tester, find.text('Restore excluded transactions (2)'));
+    await _tap(tester, find.text('Confirm'));
+    expect(repository.calls.last['operation'], 'sources_restore');
+    expect(repository.state.deposits, hasLength(3));
+    expect(repository.state.withdrawals, hasLength(1));
+    expect(
+        find.textContaining('Restore excluded transactions ('), findsNothing);
+  });
+
+  testWidgets('inclusion failure hides incomplete totals and supports reload',
+      (tester) async {
+    final repository = _Repository(_funded())
+      ..inclusionError = Exception('private financial detail');
+    await _page(tester, repository);
+    expect(
+        find.text('Could not load this plan. Please retry.'), findsOneWidget);
+    expect(find.text('Pooled deposits'), findsNothing);
+    expect(find.text('Add deposit'), findsNothing);
+    expect(find.textContaining('private financial detail'), findsNothing);
+    repository.inclusionError = null;
+    await _tap(tester, find.text('Reload plan'));
+    expect(find.text('Pooled deposits'), findsOneWidget);
+    expect(repository.inclusions, hasLength(2));
+  });
+
+  testWidgets('stale inclusion cannot overwrite the newly selected month',
+      (tester) async {
+    final pending = Completer<BudgeteerState>();
+    final repository = _Repository(_funded())..pendingInclusion = pending;
+    await tester.pumpWidget(MaterialApp(
+        home: ListView(children: [
+      BudgeteerPage(
+          repository: repository, month: '2026-11', transactions: const [])
+    ])));
+    await tester.pump();
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    repository.pendingInclusion = null;
+    repository.state = const BudgeteerState.empty();
+    await tester.pumpWidget(MaterialApp(
+        home: ListView(children: [
+      BudgeteerPage(
+          repository: repository, month: '2026-12', transactions: const [])
+    ])));
+    await tester.pumpAndSettle();
+    pending.complete(_funded());
+    await tester.pumpAndSettle();
+    expect(find.text('2026-12'), findsOneWidget);
+    expect(find.text('Paycheck'), findsNothing);
+  });
+
+  testWidgets('inclusion conflict requires reload before editing',
+      (tester) async {
+    final repository = _Repository(_funded())
+      ..inclusionError = Exception('budgeteer_conflict');
+    await _page(tester, repository);
+    expect(
+        find.text(
+            'This plan changed elsewhere. Reload to include all transactions.'),
+        findsOneWidget);
+    expect(find.text('Add deposit'), findsNothing);
+    repository.inclusionError = null;
+    await _tap(tester, find.text('Reload plan to reapply'));
+    expect(find.text('Add deposit'), findsOneWidget);
+    expect(repository.inclusions, hasLength(2));
+  });
+
   testWidgets(
       'desktop places funding beside editor and source-unavailable entries survive',
       (tester) async {
@@ -376,16 +557,21 @@ void main() {
     ]);
   });
 
-  testWidgets('empty monthly plan creates nothing and explains zero funding',
+  testWidgets('empty monthly plan checks all sources and explains zero funding',
       (tester) async {
     final repository = _Repository(const BudgeteerState.empty());
     await _page(tester, repository);
     expect(repository.months, ['2026-11']);
     expect(repository.calls, isEmpty);
+    expect(repository.inclusions, [
+      {'month': '2026-11', 'revision': 0}
+    ]);
     expect(
         find.text('No funding yet. Add a deposit to give this plan capacity.'),
         findsOneWidget);
-    expect(find.text('Start with a deposit. Nothing is added automatically.'),
+    expect(
+        find.text('No included deposits this month. Add a planning deposit '
+            'or restore excluded transactions.'),
         findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -492,6 +678,7 @@ void main() {
       'description': 'Posted salary',
       'amount_minor': 12345,
       'status': 'posted',
+      'posted_date': '2026-11-02',
       'category_kind': 'income'
     };
     final pending = {
@@ -512,14 +699,21 @@ void main() {
       'description': 'Expense refund',
       'category_kind': 'expense'
     };
+    final old = {
+      ...source,
+      'id': 'old',
+      'description': 'Old salary',
+      'posted_date': '2026-10-31'
+    };
     final repository = _Repository(const BudgeteerState.empty());
     await _page(tester, repository,
-        transactions: [source, pending, transfer, expense]);
+        transactions: [source, pending, transfer, expense, old]);
     await _tap(tester, find.text('Add deposit'));
     await _tap(tester, find.text('Manual planning item'));
     expect(find.textContaining('Pending salary'), findsNothing);
     expect(find.textContaining('Transfer salary'), findsNothing);
     expect(find.textContaining('Expense refund'), findsNothing);
+    expect(find.textContaining('Old salary'), findsNothing);
     await _tap(tester, find.textContaining('Posted salary'));
     await _tap(tester, find.text('Save deposit'));
     expect(

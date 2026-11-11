@@ -31,7 +31,7 @@ select set_config('request.jwt.claims','{"sub":"00000000-0000-4000-8000-00000000
 do $$ begin begin perform public.budgeteer_mutate('2026-11-01',0,'group_save','{"name":"No","color_key":"teal"}'); raise exception 'owner bypass'; exception when insufficient_privilege then null; end; end $$;
 select pg_temp.assert((select count(*)=0 from public.budgeteer_plans),'non-owner RLS empty');
 select set_config('request.jwt.claims','{"sub":"00000000-0000-4000-8000-000000000001","aal":"aal2"}',true);
-select pg_temp.assert(public.budgeteer_read('2026-11-01')='{"plan":null,"groups":[],"entries":[],"labels":[],"entry_labels":[]}'::jsonb,'empty read exact contract');
+select pg_temp.assert(public.budgeteer_read('2026-11-01')='{"plan":null,"groups":[],"entries":[],"labels":[],"entry_labels":[],"excluded_source_count":0}'::jsonb,'empty read exact contract');
 select pg_temp.assert((select count(*)=0 from public.budgeteer_plans),'read did not create plan');
 select pg_temp.expect_error('entry_save','{"kind":"deposit","name":"Refund is not income","amount_minor":100,"source_transaction_id":"20000000-0000-4000-8000-000000000003","label_ids":[]}','budgeteer_invalid_source');
 select pg_temp.assert((select count(*)=0 from public.budgeteer_plans),'failed mutation did not create plan');
@@ -108,3 +108,4 @@ select pg_temp.assert((select revision=12 from public.budgeteer_plans where mont
 delete from public.budgeteer_plans where month='2026-11-01';
 select pg_temp.assert((select count(*)=0 from public.budgeteer_entries),'plan deletion cascades entries');
 rollback;
+\ir budgeteer_sources.sql

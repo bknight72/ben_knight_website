@@ -85,12 +85,14 @@ class BudgeteerState {
   final List<Json> entries;
   final List<Json> labels;
   final List<Json> entryLabels;
+  final int excludedSourceCount;
   const BudgeteerState(
       {this.plan,
       this.groups = const [],
       this.entries = const [],
       this.labels = const [],
-      this.entryLabels = const []});
+      this.entryLabels = const [],
+      this.excludedSourceCount = 0});
   const BudgeteerState.empty() : this();
 
   int get revision => plan?['revision'] as int? ?? 0;
@@ -149,6 +151,8 @@ class BudgeteerState {
     final entries = rows('entries');
     final labels = rows('labels');
     final assignments = rows('entry_labels');
+    final excludedSourceCount = json['excluded_source_count'];
+    if (excludedSourceCount is! int || excludedSourceCount < 0) invalid();
     bool validNames(List<Json> values) => values.every((row) =>
         row['id'] is String &&
         row['name'] is String &&
@@ -165,7 +169,8 @@ class BudgeteerState {
         (plan == null &&
             (groups.isNotEmpty ||
                 entries.isNotEmpty ||
-                assignments.isNotEmpty))) {
+                assignments.isNotEmpty ||
+                excludedSourceCount != 0))) {
       invalid();
     }
     for (final entry in entries) {
@@ -191,7 +196,8 @@ class BudgeteerState {
         groups: groups..sort(_compare),
         entries: entries,
         labels: labels,
-        entryLabels: assignments);
+        entryLabels: assignments,
+        excludedSourceCount: excludedSourceCount);
     state.allocation;
     return state;
   }

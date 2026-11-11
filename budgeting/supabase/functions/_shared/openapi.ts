@@ -398,6 +398,17 @@ export const openapi = {
         entry_id: uuid("Withdrawal entry"),
         label_id: uuid("Reusable owner label"),
       }),
+      BudgeteerSourceExclusion: object({
+        id: uuid("Database-generated exclusion ID"),
+        owner_id: uuid("Provisioned owner"),
+        month: {
+          ...string("Excluded reporting month, first day only", "2026-11-01"),
+          format: "date",
+        },
+        source_transaction_id: uuid(
+          "Excluded bank source; deleting its transaction cascades this exclusion",
+        ),
+      }),
       BudgeteerState: object({
         plan: {
           allOf: [ref("BudgeteerPlan")],
@@ -426,6 +437,13 @@ export const openapi = {
           description: "Assignments for this plan only",
           items: ref("BudgeteerEntryLabel"),
         },
+        excluded_source_count: {
+          type: "integer",
+          minimum: 0,
+          description:
+            "Persisted exclusions for this owner/month, including sources currently ineligible; sources_restore clears all of them atomically",
+          example: 2,
+        },
       }),
       BudgeteerMutation: object({
         p_month: {
@@ -451,6 +469,8 @@ export const openapi = {
             "label_delete",
             "source_refresh",
             "source_unlink",
+            "sources_include",
+            "sources_restore",
             "reorder",
           ],
           description: "Atomic operation selector",
@@ -459,7 +479,7 @@ export const openapi = {
         p_payload: {
           type: "object",
           description:
-            "Operation-specific payload: entry_save requires kind/name/amount_minor/label_ids and optional id/group_id/source_transaction_id; label_ids are complete and withdrawals only. group_save requires name/color_key and optional id. label_save requires name/color_key, optional id and expected_updated_at on update; label_delete requires id/expected_updated_at. entry_delete/group_delete/source_refresh/source_unlink require id. reorder requires complete unique groups:[UUID] and entries:[{id,group_id:UUID|null}] lists. IDs omitted on create are database-generated; supplied IDs must already belong to this plan/owner. Group deletion ungroups entries; label deletion removes assignments only. Existing links/snapshots are preserved by entry_save; explicit source_unlink clears both, source_refresh validates current source and resets snapshot/name/amount. Replacing an existing link requires unlink first.",
+            "Operation-specific payload: entry_save requires kind/name/amount_minor/label_ids and optional id/group_id/source_transaction_id; label_ids are complete and withdrawals only. group_save requires name/color_key and optional id. label_save requires name/color_key, optional id and expected_updated_at on update; label_delete requires id/expected_updated_at. entry_delete/group_delete/source_refresh/source_unlink require id. sources_include and sources_restore require an empty object. reorder requires complete unique groups:[UUID] and entries:[{id,group_id:UUID|null}] lists. IDs omitted on create are database-generated; supplied IDs must already belong to this plan/owner. Group deletion ungroups entries; label deletion removes assignments only. Existing links/snapshots are preserved by entry_save; explicit source_unlink clears both and excludes the former source for this month; deleting a linked entry also persists its exclusion. Explicit entry_save linking clears that source exclusion. source_refresh validates current source and resets snapshot/name/amount. Replacing an existing link requires unlink first.",
           properties: {
             id: uuid("Existing object ID; omit on create"),
             kind: {
@@ -547,7 +567,7 @@ export const openapi = {
           ref("BudgeteerState"),
         ),
         description:
-          "Creates an absent plan only on successful mutation. Owner-global label writes advance every owner plan revision and require opaque updated_at tokens on updates/deletes. Raw bank-source deletion preserves independent entries/snapshots and bumps affected plan revisions, including service-role account deletion/import undo. Reads and mutation never write bank tables. Tables allow owner/MFA SELECT only for browsers; direct browser writes are revoked. PostgREST errors use its native {code,message,details,hint} shape, with budgeteer_conflict identifiable in message (P0001). Other validation errors roll back all changes.",
+          "sources_include appends every missing eligible posted nonzero transaction across all owner accounts for the reporting month, using posted_date then transaction_date. Transfers, card payments, budget-excluded activity, expense refunds and income reversals are excluded. Entries append deterministically by effective date then source UUID, withdrawals Ungrouped; existing values, snapshots, groups, labels and positions are untouched. sources_restore clears current-month exclusions then includes eligible sources in the same transaction. Both operations require exact revisions, enforce aggregate limits atomically and increment once only when state changes; a no-op leaves revision unchanged and an empty absent month remains absent. Other successful mutations create an absent plan. Owner-global label writes advance every owner plan revision and require opaque updated_at tokens on updates/deletes. Raw bank-source deletion preserves independent entries/snapshots, cascades exclusions and bumps affected plan revisions, including service-role account deletion/import undo. Plan deletion cascades exclusions. Exclusions identify transaction UUIDs, not newly assigned IDs on reimport. Reads and mutations never write bank tables. Tables allow owner/MFA SELECT only for browsers; direct browser writes are revoked. PostgREST errors use its native {code,message,details,hint} shape, with budgeteer_conflict identifiable in message (P0001). Other validation errors roll back all changes.",
       },
     },
     "/health": {
@@ -796,6 +816,11 @@ export const openapi = {
                 type: "array",
                 items: ref("BudgeteerEntryLabel"),
                 description: "All entry assignments",
+              },
+              budgeteer_source_exclusions: {
+                type: "array",
+                items: ref("BudgeteerSourceExclusion"),
+                description: "All persistent owner/month/source exclusions",
               },
             },
           }),
