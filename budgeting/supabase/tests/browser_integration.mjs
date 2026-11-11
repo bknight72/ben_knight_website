@@ -193,7 +193,7 @@ try {
   const included = await includedSources;
   assert.equal(included.status(), 200, "Default transaction inclusion failed");
   const initialPlan = await included.json();
-  const automaticEntry = initialPlan.entries.find((entry) =>
+  let automaticEntry = initialPlan.entries.find((entry) =>
     entry.source_transaction_id != null
   );
   assert.ok(automaticEntry, "No bank transactions were included by default");
@@ -201,13 +201,22 @@ try {
     name: `Delete ${automaticEntry.name}`,
     exact: true,
   })
-    .click();
+    .first().click();
   const removedSource = page.waitForResponse((response) =>
     new URL(response.url()).pathname === "/rest/v1/rpc/budgeteer_mutate" &&
     response.request().postDataJSON()?.p_operation === "entry_delete"
   );
   await click("Confirm");
-  assert.equal((await removedSource).status(), 200, "Source exclusion failed");
+  const removal = await removedSource;
+  assert.equal(removal.status(), 200, "Source exclusion failed");
+  // Descriptions are not unique; identify the clicked entry by its saved ID.
+  automaticEntry = initialPlan.entries.find((entry) =>
+    entry.id === removal.request().postDataJSON().p_payload.id
+  );
+  assert.ok(
+    automaticEntry?.source_transaction_id,
+    "Removed entry has no bank source",
+  );
   await page.getByText("Overview", { exact: true }).click();
   const reloadedSources = page.waitForResponse((response) =>
     new URL(response.url()).pathname === "/rest/v1/rpc/budgeteer_mutate" &&
@@ -245,25 +254,38 @@ try {
   await fill("Amount (USD)", "1200.00");
   const planSaved = page.waitForResponse((response) =>
     new URL(response.url()).pathname === "/rest/v1/rpc/budgeteer_mutate" &&
-    response.request().method() === "POST"
+    response.request().method() === "POST" &&
+    response.request().postDataJSON().p_operation === "entry_save"
   );
   await click("Save deposit");
-  assert.equal(
-    (await planSaved).status(),
-    200,
-    "Budgeteer deposit save failed",
+  const savedPlan = await planSaved;
+  assert.equal(savedPlan.status(), 200, "Budgeteer deposit save failed");
+  const funding = (await savedPlan.json()).entries.find((entry) =>
+    entry.name === "Browser Budgeteer funding" && entry.amount_minor === 120000
   );
-  await page.getByText("Browser Budgeteer funding", { exact: false }).first()
-    .waitFor();
+  assert.ok(funding, "Saved deposit missing from canonical plan");
+  async function reopenBudgeteer() {
+    const loaded = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === "/rest/v1/rpc/budgeteer_mutate" &&
+      response.request().method() === "POST" &&
+      response.request().postDataJSON().p_operation === "sources_include"
+    );
+    await page.getByText("Budgeteer", { exact: true }).click();
+    const response = await loaded;
+    assert.equal(response.status(), 200, "Budgeteer reload failed");
+    assert.ok(
+      (await response.json()).entries.some((entry) =>
+        entry.id === funding.id && entry.name === funding.name &&
+        entry.amount_minor === funding.amount_minor
+      ),
+      "Saved deposit did not persist across navigation/reload",
+    );
+  }
   await page.getByText("Overview", { exact: true }).click();
-  await page.getByText("Budgeteer", { exact: true }).click();
-  await page.getByText("Browser Budgeteer funding", { exact: false }).first()
-    .waitFor();
+  await reopenBudgeteer();
   await page.reload({ waitUntil: "networkidle" });
   await restoredWorkspace();
-  await page.getByText("Budgeteer", { exact: true }).click();
-  await page.getByText("Browser Budgeteer funding", { exact: false }).first()
-    .waitFor();
+  await reopenBudgeteer();
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(
     await page.evaluate(() =>
