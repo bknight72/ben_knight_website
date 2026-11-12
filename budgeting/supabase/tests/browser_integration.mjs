@@ -131,10 +131,16 @@ async function authenticate(password) {
   assert.equal(response.status(), 200, "Real TOTP verification failed");
   return (await response.json()).access_token;
 }
+async function fixtureAccountVisible(target = page) {
+  await target.getByText("Accounts", { exact: true }).click();
+  // Overview contains aggregate history, while Accounts exposes account cards.
+  await target.getByRole("group", { name: /^Synthetic local cash\s/ })
+    .waitFor({ timeout: 30000 });
+  await target.getByText("Overview", { exact: true }).click();
+}
 async function restoredWorkspace() {
   await semantics();
-  await page.getByText("Synthetic local cash", { exact: false }).first()
-    .waitFor({ timeout: 30000 });
+  await fixtureAccountVisible();
   assert.equal(
     await page.getByRole("textbox", { name: "Authenticator code", exact: true })
       .count(),
@@ -173,15 +179,7 @@ try {
   await page.goto(base, { waitUntil: "networkidle" });
   await semantics();
   const token = await authenticate(fixture.password);
-  // Wait for real fixture data rather than decorative metric text merged by semantics.
-  await page.getByText("Synthetic local cash", { exact: false }).first()
-    .waitFor({
-      timeout: 30000,
-    });
-  assert.ok(
-    await page.getByText("Synthetic local cash", { exact: false }).count() > 0,
-    "Real API fixture was not rendered",
-  );
+  await fixtureAccountVisible();
   const includedSources = page.waitForResponse((response) =>
     new URL(response.url()).pathname === "/rest/v1/rpc/budgeteer_mutate" &&
     response.request().method() === "POST" &&
@@ -201,7 +199,7 @@ try {
     typeof included.request().postDataJSON().p_payload.expected_groups_revision,
     "number",
   );
-  await page.getByText("Withdrawals", { exact: true }).click();
+  await page.getByRole("button", { name: "Withdrawals", exact: true }).click();
   await page.getByText("Groups are shared across all months.", { exact: false })
     .waitFor();
   assert.equal(
@@ -466,8 +464,7 @@ try {
   await otherTab.evaluate(() =>
     document.querySelector("flt-semantics-placeholder")?.click()
   );
-  await otherTab.getByText("Synthetic local cash", { exact: false }).first()
-    .waitFor({ timeout: 30000 });
+  await fixtureAccountVisible(otherTab);
   const rememberedSession = await page.evaluate(() => {
     const key = Object.keys(localStorage).find((key) =>
       key.endsWith("-auth-token")
