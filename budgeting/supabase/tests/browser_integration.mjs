@@ -244,6 +244,7 @@ try {
     "Excluded source reappeared after navigation",
   );
   assert.equal(reloadedPlan.excluded_source_count, 1);
+  await page.getByRole("button", { name: "Withdrawals", exact: true }).click();
   await page.getByRole("button", {
     name: "Restore excluded transactions (1)",
     exact: true,
