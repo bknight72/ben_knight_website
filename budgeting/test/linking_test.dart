@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:private_budgeting/app.dart';
 import 'package:private_budgeting/config.dart';
 import 'package:private_budgeting/domain.dart';
