@@ -393,33 +393,65 @@ try {
   await page.getByText("Accounts", { exact: true }).click();
   if (fixture.mockStripe) {
     // Interrupt only browser completion dispatch, after synthetic bank consent.
-    // Reload must recover the server's pending session without another Stripe modal.
-    let interrupted = false;
+    // Retry UI was removed; verify persistence, then exercise API-assisted recovery.
+    let interruptedSession;
     await page.route("**/connections/complete", (route) => {
-      interrupted = true;
+      interruptedSession = route.request().postDataJSON().sessionId;
       return route.abort("failed");
     });
-    await click("Connect bank");
-    await click("Confirm");
-    await page.waitForResponse((response) =>
+    const pendingAfterInterruption = page.waitForResponse((response) =>
       response.url().endsWith("/connections/pending") &&
       response.status() === 200
     );
-    await page.getByRole("button", { name: "Retry completion", exact: true })
-      .waitFor();
-    assert.ok(interrupted, "Completion interruption was not exercised");
+    await click("Connect bank");
+    await click("Confirm");
+    const pending = await (await pendingAfterInterruption).json();
+    assert.ok(interruptedSession, "Completion interruption was not exercised");
+    assert.ok(pending.sessions.some((s) => s.sessionId === interruptedSession));
+    assert.equal(
+      await page.getByRole("button", { name: "Retry completion", exact: true })
+        .count(),
+      0,
+    );
     await page.unroute("**/connections/complete");
+    const pendingAfterReload = page.waitForResponse((response) =>
+      response.url().endsWith("/connections/pending") &&
+      response.status() === 200
+    );
     await page.reload({ waitUntil: "networkidle" });
     await restoredWorkspace();
     await page.getByText("Accounts", { exact: true }).click();
-    await page.getByRole("button", { name: "Retry completion", exact: true })
-      .waitFor();
-    const accepted = page.waitForResponse((response) =>
-      response.url().endsWith("/connections/complete")
+    const reloadedPending = await (await pendingAfterReload).json();
+    assert.ok(
+      reloadedPending.sessions.some((s) => s.sessionId === interruptedSession),
+      "Interrupted session was not retained after reload",
     );
-    await click("Retry completion");
-    await click("Confirm");
-    const completion = await accepted;
+    assert.equal(
+      await page.getByRole("button", { name: "Retry completion", exact: true })
+        .count(),
+      0,
+    );
+    assert.equal(
+      await page.getByText("Unfinished bank connections", { exact: true })
+        .count(),
+      0,
+    );
+    const currentToken = await page.evaluate(() => {
+      const key = Object.keys(localStorage).find((key) =>
+        key.endsWith("-auth-token")
+      );
+      return JSON.parse(localStorage.getItem(key)).access_token;
+    });
+    const completion = await context.request.post(
+      `${fixture.supabaseUrl}/functions/v1/api/api/v1/connections/complete`,
+      {
+        headers: {
+          apikey: fixture.publishableKey,
+          authorization: `Bearer ${currentToken}`,
+        },
+        data: { sessionId: interruptedSession },
+      },
+    );
     assert.equal(completion.status(), 200);
     const completed = await completion.json();
     assert.equal(completed.status, "queued");
@@ -431,11 +463,7 @@ try {
       {
         headers: {
           apikey: fixture.publishableKey,
-          authorization: `Bearer ${
-            (await completion.request().allHeaders()).authorization.split(
-              " ",
-            )[1]
-          }`,
+          authorization: `Bearer ${currentToken}`,
         },
       },
     );
@@ -455,7 +483,7 @@ try {
       false,
     );
     console.log(
-      "PASS enabled Chromium + real local MFA/functions/Postgres: mocked Stripe.js consent, interrupted completion, remembered MFA on reload, pending-session resume, queued response and persisted subscription status, no paid balance request",
+      "PASS enabled Chromium + real local MFA/functions/Postgres: mocked Stripe.js consent, interrupted completion, remembered MFA on reload, pending-session persistence without retry UI, API-assisted completion, queued response and persisted subscription status, no paid balance request",
     );
   }
   const otherTab = await context.newPage();
