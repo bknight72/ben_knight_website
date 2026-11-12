@@ -64,7 +64,9 @@ void main() {
     expect(tester.getRect(find.byKey(const ValueKey('tower-of-money-card'))),
         funding);
     expect(repository.reads, 1);
-    await tester.tap(find.text('Withdrawals'));
+    await tester.tap(find.descendant(
+        of: find.byType(SegmentedButton<int>),
+        matching: find.text('Withdrawals')));
     await tester.pumpAndSettle();
     expect(find.text('Add withdrawal'), findsOneWidget);
     expect(find.text('Add deposit'), findsNothing);
