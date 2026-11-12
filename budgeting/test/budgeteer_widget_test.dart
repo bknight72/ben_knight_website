@@ -2335,11 +2335,7 @@ void main() {
         tester.getBottomLeft(find.byType(SegmentedButton<int>)).dy + 12);
     expect(fundingRect.bottom, 984);
     final summaryRects = [
-      for (final label in [
-        'Pooled deposits',
-        'Withdrawals',
-        'Funding deficit'
-      ])
+      for (final label in ['Pooled deposits', 'Withdrawals', 'Funding deficit'])
         tester.getRect(find
             .ancestor(of: find.text(label), matching: find.byType(Container))
             .first),
@@ -3156,11 +3152,7 @@ void main() {
       expect(tower.left, 16);
       expect(tower.right, 344);
       final summaries = [
-        for (final label in [
-          'Pooled deposits',
-          'Withdrawals',
-          'Remaining'
-        ])
+        for (final label in ['Pooled deposits', 'Withdrawals', 'Remaining'])
           tester.getRect(find
               .ancestor(of: find.text(label), matching: find.byType(Container))
               .first),
