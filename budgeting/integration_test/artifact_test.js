@@ -134,6 +134,7 @@ try {
       { exact: false },
     )
       .waitFor({ timeout: 30000 });
+    await page.locator("#loading").waitFor({ state: "detached" });
     assert.equal(
       await page.locator("flt-semantics").filter({
         hasText: configured
@@ -165,6 +166,7 @@ try {
         : "No account or financial data",
       { exact: false },
     ).waitFor({ timeout: 30000 });
+    await page.locator("#loading").waitFor({ state: "detached" });
     assert.deepEqual(errors, []);
     assert.deepEqual(assetErrors, []);
     await context.close();

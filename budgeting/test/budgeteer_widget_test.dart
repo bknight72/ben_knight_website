@@ -17,6 +17,7 @@ class _Repository extends LedgerRepository {
   Object? readError;
   Object? saveError;
   Object? inclusionError;
+  Completer<BudgeteerState>? pendingRead;
   Completer<BudgeteerState>? pendingInclusion;
   List<Json> sources = [];
   final excluded = <String>{};
@@ -29,6 +30,7 @@ class _Repository extends LedgerRepository {
   Future<BudgeteerState> budgeteerRead(String month) async {
     months.add(month);
     if (readError != null) throw readError!;
+    if (pendingRead != null) return pendingRead!.future;
     return state;
   }
 
@@ -334,6 +336,7 @@ Future<void> _page(WidgetTester tester, _Repository repository,
     {String month = '2026-11',
     List<Json> transactions = const [],
     bool groupsOnly = false,
+    bool settle = true,
     bool openEditor = true}) async {
   await tester.pumpWidget(MaterialApp(
     theme: ThemeData(useMaterial3: true),
@@ -347,6 +350,10 @@ Future<void> _page(WidgetTester tester, _Repository repository,
           groupsOnly: groupsOnly),
     )),
   ));
+  if (!settle) {
+    await tester.pump();
+    return;
+  }
   await tester.pumpAndSettle();
   if (openEditor && !groupsOnly) await _tab(tester, 'Withdrawals');
 }
@@ -2164,7 +2171,7 @@ void main() {
     expect(find.text('Pooled deposits'), findsOneWidget);
   });
 
-  testWidgets('all accounts populate automatically and removals survive reload',
+  testWidgets('mounted arrivals include all accounts and preserve removals',
       (tester) async {
     final repository = _Repository(const BudgeteerState.empty())
       ..sources = [
@@ -2200,7 +2207,7 @@ void main() {
           'posted_date': '2026-10-31'
         },
       ];
-    await _page(tester, repository);
+    await _page(tester, repository, transactions: repository.sources);
     expect(repository.state.deposits, hasLength(2));
     expect(repository.state.withdrawals, hasLength(1));
     expect(repository.state.allocation.deposits, 20100);
@@ -2211,7 +2218,6 @@ void main() {
     await _tab(tester, 'Withdrawals');
     await _tap(tester, find.byTooltip('Delete Utility bill'));
     await _tap(tester, find.text('Confirm'));
-    await tester.pumpWidget(const SizedBox());
     repository.sources.add({
       'id': 'new',
       'account_id': 'savings',
@@ -2220,7 +2226,14 @@ void main() {
       'status': 'posted',
       'posted_date': '2026-11-04'
     });
-    await _page(tester, repository);
+    await _page(tester, repository,
+        transactions: repository.sources, openEditor: false);
+    expect(repository.inclusions, hasLength(2));
+    expect(
+        tester
+            .widget<SegmentedButton<int>>(find.byType(SegmentedButton<int>))
+            .selected,
+        {1});
     expect(repository.state.deposits, hasLength(2));
     expect(repository.state.withdrawals, isEmpty);
     expect(repository.state.allocation.deposits, 300);
@@ -2234,6 +2247,388 @@ void main() {
     expect(
         find.textContaining('Restore excluded transactions ('), findsNothing);
   });
+
+  testWidgets('mounted source refresh preserves tab collapse and scroll state',
+      (tester) async {
+    final base = _funded();
+    final repository = _Repository(BudgeteerState(
+      plan: base.plan,
+      groups: base.groups,
+      entries: [
+        ...base.entries,
+        for (var i = 0; i < 20; i++)
+          _entry('extra-$i', 'Extra $i', 'withdrawal', 100),
+      ],
+    ));
+    await _page(tester, repository);
+    final pageState = tester.state(find.byType(BudgeteerPage));
+    await _tap(tester, find.byTooltip('Collapse Essentials group'));
+    final scroll = tester.widget<SingleChildScrollView>(find.ancestor(
+        of: find.byTooltip('Expand Essentials group'),
+        matching: find.byType(SingleChildScrollView)));
+    final controller = scroll.controller!;
+    controller.jumpTo(80);
+    await tester.pumpAndSettle();
+    repository.sources = [
+      {
+        'id': 'arrival',
+        'description': 'New withdrawal',
+        'amount_minor': -200,
+        'status': 'posted',
+        'posted_date': '2026-11-04',
+      },
+    ];
+    final inclusion = Completer<BudgeteerState>();
+    repository.pendingInclusion = inclusion;
+    await _page(tester, repository,
+        transactions: repository.sources, openEditor: false, settle: false);
+    expect(tester.state(find.byType(BudgeteerPage)), same(pageState));
+    expect(controller.hasClients, isTrue);
+    expect(controller.offset, 80);
+    inclusion.complete(repository._include('2026-11'));
+    repository.pendingInclusion = null;
+    await tester.pumpAndSettle();
+    expect(controller.offset, 80);
+    expect(repository.state.withdrawals.last['name'], 'New withdrawal');
+    controller.jumpTo(0);
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Expand Essentials group'), findsOneWidget);
+    expect(find.byTooltip('Edit Rent'), findsNothing);
+    expect(
+        tester
+            .widget<SegmentedButton<int>>(find.byType(SegmentedButton<int>))
+            .selected,
+        {1});
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('same-ID pending transaction becomes posted without unmounting',
+      (tester) async {
+    final source = <String, dynamic>{
+      'id': 'pending',
+      'description': 'Posted withdrawal',
+      'amount_minor': -300,
+      'status': 'pending',
+      'transaction_date': '2026-11-04',
+    };
+    final repository = _Repository(const BudgeteerState.empty())
+      ..sources = [source];
+    await _page(tester, repository, transactions: repository.sources);
+    expect(repository.state.entries, isEmpty);
+    final pageState = tester.state(find.byType(BudgeteerPage));
+    source['status'] = 'posted';
+    await _page(tester, repository,
+        transactions: repository.sources, openEditor: false);
+    expect(tester.state(find.byType(BudgeteerPage)), same(pageState));
+    expect(repository.inclusions, hasLength(2));
+    expect(find.byTooltip('Edit Posted withdrawal'), findsOneWidget);
+  });
+
+  for (final change in <String, dynamic>{
+    'is_transfer': false,
+    'is_card_payment': false,
+    'excluded_from_budget': false,
+    'category_kind': 'expense',
+    'posted_date': '2026-11-04',
+    'transaction_date': '2026-11-04',
+  }.entries) {
+    testWidgets('same-ID ${change.key} change refreshes source eligibility',
+        (tester) async {
+      final source = <String, dynamic>{
+        'id': 'changed',
+        'description': 'Newly eligible',
+        'amount_minor': -300,
+        'status': 'posted',
+        'transaction_date': '2026-11-04',
+        change.key: change.value is bool
+            ? true
+            : change.key == 'category_kind'
+                ? 'income'
+                : '2026-10-31',
+      };
+      final repository = _Repository(const BudgeteerState.empty())
+        ..sources = [source];
+      await _page(tester, repository, transactions: repository.sources);
+      expect(repository.state.entries, isEmpty);
+      source[change.key] = change.value;
+      await _page(tester, repository,
+          transactions: repository.sources, openEditor: false);
+      expect(repository.inclusions, hasLength(2));
+      expect(find.byTooltip('Edit Newly eligible'), findsOneWidget);
+    });
+  }
+
+  testWidgets('unchanged copied reordered transactions do not refresh',
+      (tester) async {
+    final repository = _Repository(_funded());
+    final transactions = <Json>[
+      {'id': 'one', 'amount_minor': -100, 'status': 'pending'},
+      {'id': 'two', 'amount_minor': 200, 'status': 'pending'},
+    ];
+    await _page(tester, repository, transactions: transactions);
+    await _page(tester, repository, transactions: transactions);
+    await _page(tester, repository, transactions: [
+      for (final row in transactions.reversed) {...row, 'note': 'Unrelated note'},
+    ]);
+    expect(repository.months, ['2026-11']);
+    expect(repository.inclusions, hasLength(1));
+    expect(repository.calls, isEmpty);
+  });
+
+  testWidgets('groups-only ignores transaction changes', (tester) async {
+    final repository = _Repository(_funded());
+    await _page(tester, repository, groupsOnly: true);
+    await _page(tester, repository, groupsOnly: true, transactions: [
+      {'id': 'new', 'amount_minor': -100, 'status': 'posted'},
+    ]);
+    expect(repository.months, ['2026-11']);
+    expect(repository.inclusions, isEmpty);
+    expect(repository.calls, isEmpty);
+  });
+
+  for (final saveEdit in [false, true]) {
+    testWidgets(
+        'arrival waits for entry dialog ${saveEdit ? 'save' : 'cancel'} after dropdown changes',
+        (tester) async {
+      final repository = _Repository(_funded());
+      await _page(tester, repository);
+      await _tap(tester, find.byTooltip('Edit Rent'));
+      final inclusion = Completer<BudgeteerState>();
+      repository.pendingInclusion = inclusion;
+      repository.sources = [
+        {
+          'id': 'arrival',
+          'description': 'Arrived while editing',
+          'amount_minor': -200,
+          'status': 'posted',
+          'posted_date': '2026-11-04',
+        },
+      ];
+      await _page(tester, repository,
+          transactions: repository.sources, openEditor: false, settle: false);
+      await _tap(tester,
+          find.widgetWithText(DropdownButtonFormField<String>, 'Group'));
+      await _tap(tester, find.text('Ungrouped').last);
+      expect(repository.months, ['2026-11']);
+      expect(repository.inclusions, hasLength(1));
+      expect(
+          tester
+              .widget<FilledButton>(
+                  find.widgetWithText(FilledButton, 'Save withdrawal'))
+              .onPressed,
+          isNotNull);
+      await tester.tap(find.text(saveEdit ? 'Save withdrawal' : 'Cancel'));
+      await tester.pump();
+      expect(repository.inclusions, hasLength(2));
+      expect(repository.inclusions.last['revision'], repository.state.revision);
+      if (saveEdit) {
+        expect(repository.calls.single['payload']['group_id'], isNull);
+      } else {
+        expect(repository.calls, isEmpty);
+      }
+      inclusion.complete(repository._include('2026-11'));
+      repository.pendingInclusion = null;
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byTooltip('Edit Arrived while editing'), findsOneWidget);
+      await _tap(tester, find.byTooltip('Edit Rent'));
+      expect(
+          tester
+              .widget<FilledButton>(
+                  find.widgetWithText(FilledButton, 'Save withdrawal'))
+              .onPressed,
+          isNotNull);
+      await _tap(tester, find.text('Save withdrawal'));
+      expect(repository.calls, hasLength(saveEdit ? 2 : 1));
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('nested color dialog defers refresh until group editor closes',
+      (tester) async {
+    final repository = _Repository(_funded());
+    await _page(tester, repository);
+    await _tap(tester, find.byTooltip('Edit group Essentials'));
+    await _tap(tester, find.byTooltip('Choose custom color'));
+    await _page(tester, repository, openEditor: false, transactions: [
+      {'id': 'arrival', 'amount_minor': -100, 'status': 'posted'},
+    ]);
+    expect(repository.inclusions, hasLength(1));
+    await _tap(tester, find.text('Apply color'));
+    expect(repository.inclusions, hasLength(1));
+    expect(
+        tester
+            .widget<FilledButton>(
+                find.widgetWithText(FilledButton, 'Save group'))
+            .onPressed,
+        isNotNull);
+    await _tap(tester, find.text('Cancel'));
+    expect(repository.inclusions, hasLength(2));
+    expect(repository.calls, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('confirmation dialog defers refresh until dismissed',
+      (tester) async {
+    final repository = _Repository(_funded());
+    await _page(tester, repository);
+    await _tap(tester, find.byTooltip('Delete Rent'));
+    await _page(tester, repository, openEditor: false, transactions: [
+      {'id': 'arrival', 'amount_minor': -100, 'status': 'posted'},
+    ]);
+    expect(repository.inclusions, hasLength(1));
+    expect(
+        tester
+            .widget<FilledButton>(find.widgetWithText(FilledButton, 'Confirm'))
+            .onPressed,
+        isNotNull);
+    await _tap(tester, find.text('Cancel'));
+    expect(repository.inclusions, hasLength(2));
+    expect(repository.calls, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('transaction arrival waits for save and reads saved revisions',
+      (tester) async {
+    final repository = _Repository(const BudgeteerState.empty());
+    await _page(tester, repository);
+    await _tab(tester, 'Deposits');
+    await _tap(tester, find.text('Add deposit'));
+    await tester.enterText(
+        find.widgetWithText(TextFormField, 'Name'), 'Saved deposit');
+    await tester.enterText(
+        find.widgetWithText(TextFormField, 'Amount (USD)'), '50');
+    final save = Completer<BudgeteerState>();
+    repository.pending = save;
+    await tester.tap(find.text('Save deposit'));
+    await tester.pump();
+    repository.sources = [
+      {
+        'id': 'arrival',
+        'description': 'Arrived during save',
+        'amount_minor': 200,
+        'status': 'posted',
+        'posted_date': '2026-11-04',
+      },
+    ];
+    await _page(tester, repository,
+        transactions: repository.sources, openEditor: false, settle: false);
+    await _page(tester, repository,
+        transactions: [...repository.sources],
+        openEditor: false,
+        settle: false);
+    expect(repository.months, ['2026-11']);
+    expect(repository.inclusions, hasLength(1));
+    repository.state = BudgeteerState(
+      plan: const {'id': 'plan', 'revision': 7},
+      groupsRevision: 3,
+      entries: [_entry('saved', 'Saved deposit', 'deposit', 5000)],
+    );
+    repository.pending = null;
+    save.complete(repository.state);
+    await tester.pumpAndSettle();
+    expect(repository.months, ['2026-11', '2026-11']);
+    expect(repository.inclusions.last['revision'], 7);
+    expect(repository.inclusions.last['groups_revision'], 3);
+    expect(repository.state.deposits, hasLength(2));
+    expect(repository.calls, hasLength(1));
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byTooltip('Edit Saved deposit'), findsOneWidget);
+    expect(find.byTooltip('Edit Arrived during save'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final conflict in [false, true]) {
+    testWidgets(
+        'arrival preserves failed-save ${conflict ? 'conflict' : 'retry'} until recovery',
+        (tester) async {
+      final repository = _Repository(const BudgeteerState.empty());
+      await _page(tester, repository);
+      await _tab(tester, 'Deposits');
+      await _tap(tester, find.text('Add deposit'));
+      await tester.enterText(
+          find.widgetWithText(TextFormField, 'Name'), 'Retained edit');
+      await tester.enterText(
+          find.widgetWithText(TextFormField, 'Amount (USD)'), '50');
+      final save = Completer<BudgeteerState>();
+      repository.pending = save;
+      await tester.tap(find.text('Save deposit'));
+      await tester.pump();
+      repository.sources = [
+        {
+          'id': 'arrival',
+          'description': 'Arrived during failed save',
+          'amount_minor': 200,
+          'status': 'posted',
+          'posted_date': '2026-11-04',
+        },
+      ];
+      await _page(tester, repository,
+          transactions: repository.sources, settle: false);
+      repository.pending = null;
+      save.completeError(Exception(conflict ? 'budgeteer_conflict' : 'offline'));
+      await tester.pumpAndSettle();
+      expect(repository.inclusions, hasLength(1));
+      expect(repository.months, ['2026-11']);
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.text('Retained edit'), findsOneWidget);
+      expect(
+          find.text(conflict
+              ? 'This plan or shared groups changed elsewhere. Reload, review, then reapply your change.'
+              : 'Could not save. Your last saved plan is unchanged. Please retry.'),
+          findsWidgets);
+      if (conflict) {
+        await _tap(tester, find.text('Reload, then reapply'));
+        expect(repository.inclusions, hasLength(2));
+        expect(find.text('Retained edit'), findsOneWidget);
+      }
+      await _tap(tester, find.text('Save deposit'));
+      expect(repository.inclusions, hasLength(2));
+      expect(repository.state.deposits, hasLength(2));
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byTooltip('Edit Retained edit'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final duringRead in [true, false]) {
+    testWidgets(
+        'arrivals during ${duringRead ? 'read' : 'inclusion'} queue one follow-up load',
+        (tester) async {
+      final pending = Completer<BudgeteerState>();
+      final repository = _Repository(const BudgeteerState.empty());
+      if (duringRead) {
+        repository.pendingRead = pending;
+      } else {
+        repository.pendingInclusion = pending;
+      }
+      await _page(tester, repository, settle: false);
+      for (var i = 0; i < 2; i++) {
+        repository.sources.add({
+          'id': 'arrival-$i',
+          'description': 'Arrived during load $i',
+          'amount_minor': -200,
+          'status': 'posted',
+          'posted_date': '2026-11-04',
+        });
+        await _page(tester, repository,
+            transactions: repository.sources, settle: false);
+      }
+      expect(repository.months, ['2026-11']);
+      expect(repository.inclusions, hasLength(duringRead ? 0 : 1));
+      repository.pendingRead = null;
+      repository.pendingInclusion = null;
+      pending.complete(repository.state);
+      await tester.pumpAndSettle();
+      expect(repository.months, ['2026-11', '2026-11']);
+      expect(repository.inclusions, hasLength(2));
+      expect(repository.state.withdrawals, hasLength(2));
+      await _tab(tester, 'Withdrawals');
+      expect(find.byTooltip('Edit Arrived during load 1'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('inclusion failure hides incomplete totals and supports reload',
       (tester) async {
@@ -2252,32 +2647,52 @@ void main() {
     expect(repository.inclusions, hasLength(2));
   });
 
-  testWidgets('stale inclusion cannot overwrite the newly selected month',
+  testWidgets('mounted refresh failure hides outdated totals until reload',
       (tester) async {
-    final pending = Completer<BudgeteerState>();
-    final repository = _Repository(_funded())..pendingInclusion = pending;
-    await tester.pumpWidget(MaterialApp(
-        home: Scaffold(
-            body: BudgeteerPage(
-                repository: repository,
-                month: '2026-11',
-                transactions: const []))));
-    await tester.pump();
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
-    repository.pendingInclusion = null;
-    repository.state = const BudgeteerState.empty();
-    await tester.pumpWidget(MaterialApp(
-        home: Scaffold(
-            body: BudgeteerPage(
-                repository: repository,
-                month: '2026-12',
-                transactions: const []))));
-    await tester.pumpAndSettle();
-    pending.complete(_funded());
-    await tester.pumpAndSettle();
-    expect(repository.months.last, '2026-12');
-    expect(find.text('Paycheck'), findsNothing);
+    final repository = _Repository(_funded());
+    await _page(tester, repository);
+    repository.inclusionError = Exception('refresh failed');
+    await _page(tester, repository, transactions: [
+      {'id': 'arrival', 'amount_minor': -100, 'status': 'posted'},
+    ]);
+    expect(find.text('Could not load this plan. Please retry.'), findsOneWidget);
+    expect(find.byTooltip('Edit Rent'), findsNothing);
+    expect(find.text('Add withdrawal'), findsNothing);
+    repository.inclusionError = null;
+    await _tap(tester, find.text('Reload plan'));
+    expect(find.byTooltip('Edit Rent'), findsOneWidget);
+    expect(repository.inclusions, hasLength(3));
   });
+
+  for (final duringRead in [true, false]) {
+    testWidgets(
+        'stale ${duringRead ? 'read' : 'inclusion'} cannot apply or refresh the new month',
+        (tester) async {
+      final pending = Completer<BudgeteerState>();
+      final repository = _Repository(_funded());
+      if (duringRead) {
+        repository.pendingRead = pending;
+      } else {
+        repository.pendingInclusion = pending;
+      }
+      await _page(tester, repository, settle: false);
+      await _page(tester, repository, settle: false, transactions: [
+        {'id': 'arrival', 'amount_minor': -100, 'status': 'posted'},
+      ]);
+      expect(repository.months, ['2026-11']);
+      repository.pendingRead = null;
+      repository.pendingInclusion = null;
+      repository.state = const BudgeteerState.empty();
+      await _page(tester, repository, month: '2026-12');
+      pending.complete(_funded());
+      await tester.pumpAndSettle();
+      expect(repository.months, ['2026-11', '2026-12']);
+      expect(repository.inclusions, hasLength(duringRead ? 1 : 2));
+      expect(find.text('Paycheck'), findsNothing);
+      expect(find.text('Rent'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('inclusion conflict requires reload before editing',
       (tester) async {

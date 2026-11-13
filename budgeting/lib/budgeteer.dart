@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:material_ui/material_ui.dart';
 
 import 'budgeteer_domain.dart';
@@ -58,10 +60,15 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
   String? _retryOperation;
   Json? _retryPayload;
   int _generation = 0;
+  late String _sourcesSnapshot;
+  bool _loadInFlight = false;
+  bool _refreshPending = false;
+  int _openDialogs = 0;
 
   @override
   void initState() {
     super.initState();
+    _sourcesSnapshot = _transactionSnapshot();
     _load();
   }
 
@@ -74,6 +81,9 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
   @override
   void didUpdateWidget(covariant BudgeteerPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final snapshot = _transactionSnapshot();
+    final sourcesChanged = snapshot != _sourcesSnapshot;
+    _sourcesSnapshot = snapshot;
     if (oldWidget.month != widget.month ||
         oldWidget.repository != widget.repository ||
         oldWidget.groupsOnly != widget.groupsOnly) {
@@ -87,23 +97,74 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
       _retryOperation = null;
       _retryPayload = null;
       _saving = false;
+      _loadInFlight = false;
+      _refreshPending = false;
       _load();
+    } else if (!widget.groupsOnly && sourcesChanged) {
+      _refreshPending = true;
+      _refreshSources();
     }
   }
 
-  Future<void> _load() async {
+  String _transactionSnapshot() {
+    // Copy meaningful values, not row identities: callers may update maps in place.
+    final rows = [
+      for (final row in widget.transactions)
+        jsonEncode([
+          for (final key in [
+            'id',
+            'account_id',
+            'amount_minor',
+            'status',
+            'posted_date',
+            'transaction_date',
+            'description',
+            'name',
+            'merchant_name',
+            'is_transfer',
+            'is_card_payment',
+            'excluded_from_budget',
+            'category_id',
+            'category_kind',
+          ])
+            row[key],
+        ]),
+    ]..sort();
+    return jsonEncode(rows);
+  }
+
+  void _refreshSources() {
+    if (!_refreshPending ||
+        _saving ||
+        _loadInFlight ||
+        _openDialogs > 0 ||
+        _conflict ||
+        _retryOperation != null) {
+      return;
+    }
+    _load(preserveView: true);
+  }
+
+  Future<void> _load({bool preserveView = false}) async {
+    if (_saving || _loadInFlight) {
+      _refreshPending = true;
+      return;
+    }
+    _refreshPending = false;
+    _loadInFlight = true;
     final generation = ++_generation;
     setState(() {
       _loading = true;
-      _loaded = false;
+      if (!preserveView) _loaded = false;
       _error = null;
     });
     try {
       final repository = widget.repository;
       final month = widget.month;
+      final groupsOnly = widget.groupsOnly;
       final existing = await repository.budgeteerRead(month);
       if (!mounted || generation != _generation) return;
-      final result = widget.groupsOnly
+      final result = groupsOnly
           ? existing
           : await repository.budgeteerMutate(
               month, existing.revision, 'sources_include', {},
@@ -119,6 +180,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
     } catch (error) {
       if (!mounted || generation != _generation) return;
       setState(() {
+        _loaded = false;
         _conflict = error.toString().contains('budgeteer_conflict');
         _error = _conflict
             ? 'This plan or shared groups changed elsewhere. Reload to include all transactions.'
@@ -130,7 +192,9 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
       });
     } finally {
       if (mounted && generation == _generation) {
+        _loadInFlight = false;
         setState(() => _loading = false);
+        _refreshSources();
       }
     }
   }
@@ -167,6 +231,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
     } finally {
       if (mounted && generation == _generation) {
         setState(() => _saving = false);
+        _refreshSources();
       }
     }
   }
@@ -275,7 +340,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
           physics: const AlwaysScrollableScrollPhysics(),
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            if (_loading)
+            if (_loading && !_loaded)
               const Padding(
                   padding: EdgeInsets.all(28),
                   child: Center(child: CircularProgressIndicator())),
@@ -309,7 +374,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                   )),
               const SizedBox(height: 16),
             ],
-            if (!_loading && _loaded && widget.groupsOnly) ...[
+            if (_loaded && widget.groupsOnly) ...[
               const Text(
                   'Groups are shared across all months. Changes here apply everywhere in Budgeteer. '
                   'Funding priority and transaction assignments remain monthly.',
@@ -319,7 +384,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
               const SizedBox(height: 20),
               _managedGroups('withdrawal'),
             ],
-            if (!_loading && _loaded && !widget.groupsOnly) ...[
+            if (_loaded && !widget.groupsOnly) ...[
               Wrap(spacing: 8, runSpacing: 8, children: [
                 if (_tab == 2)
                   FilledButton.icon(
@@ -402,7 +467,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
         Expanded(
             child:
                 IndexedStack(index: _tab, sizing: StackFit.expand, children: [
-          _loading || !_loaded || _error != null
+          !_loaded || _error != null
               ? SingleChildScrollView(
                   child: Column(children: [
                   if (_loading) const CircularProgressIndicator(),
@@ -1357,6 +1422,23 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
         ],
       );
 
+  Future<T?> _showDialog<T>({
+    required WidgetBuilder builder,
+    bool barrierDismissible = true,
+  }) async {
+    _openDialogs++;
+    try {
+      return await showDialog<T>(
+        context: context,
+        barrierDismissible: barrierDismissible,
+        builder: builder,
+      );
+    } finally {
+      _openDialogs--;
+      if (mounted) _refreshSources();
+    }
+  }
+
   Future<void> _entryDialog(String kind, {Json? entry}) async {
     final name = TextEditingController(text: '${entry?['name'] ?? ''}');
     final amount = TextEditingController(
@@ -1367,8 +1449,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
     String sourceId = '${entry?['source_transaction_id'] ?? ''}';
     var busy = false;
     final month = widget.month;
-    await showDialog<void>(
-      context: context,
+    await _showDialog<void>(
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(builder: (context, update) {
         final sources = widget.transactions
@@ -1544,8 +1625,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
 
   Future<Color?> _pickColor(Color initial) {
     var hsv = HSVColor.fromColor(initial);
-    return showDialog<Color>(
-        context: context,
+    return _showDialog<Color>(
         builder: (dialogContext) => StatefulBuilder(builder: (context, update) {
               final hex =
                   hsv.toColor().toARGB32().toRadixString(16).substring(2);
@@ -1685,8 +1765,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
     final type = kind == 'deposit' ? 'deposit group' : 'group';
     var parentId = '${row?['parent_group_id'] ?? ''}';
     final month = widget.month;
-    await showDialog<void>(
-      context: context,
+    await _showDialog<void>(
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, update) {
@@ -1853,8 +1932,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
       String title, String message, String operation, Json payload) async {
     var busy = false;
     final month = widget.month;
-    await showDialog<void>(
-      context: context,
+    await _showDialog<void>(
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, update) {
