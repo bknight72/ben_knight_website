@@ -1,13 +1,12 @@
 import 'package:material_ui/material_ui.dart';
 
-/// Shared color constants approximating the reference site's palette (white
-/// background, black text, teal accent, dark green footer).
+/// Shared palette inspired by the forest-to-leaf BigB logo gradient.
 class AppColors {
   AppColors._();
 
   static const Color background = Colors.white;
   static const Color text = Colors.black;
-  static const Color accent = Color(0xFF42776A);
-  static const Color darkAccent = Color(0xFF42776A);
+  static const Color accent = Color(0xFF186818);
+  static const Color darkAccent = Color(0xFF084828);
   static const Color placeholderTile = Color(0xFFEEEEEE);
 }

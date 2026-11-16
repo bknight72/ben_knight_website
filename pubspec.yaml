@@ -61,7 +61,7 @@ flutter:
   uses-material-design: true
 
   assets:
-    - web/icons/BK-logo.png
+    - web/icons/BigB-logo.png
     - web/assets/images/benoutdoors.jpg
     - web/assets/images/placeholder1.jpg
     - web/assets/images/placeholder2.jpg

@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:timezone/timezone.dart' as tz;
 
 import 'domain.dart';
+import 'app_theme.dart';
 
 enum _Metric {
   netWorth('Net worth'),
@@ -21,8 +22,8 @@ enum _Metric {
       };
 }
 
-const _ink = Color(0xff183438);
-const _accent = Color(0xff007f78);
+const _ink = BudgetColors.text;
+const _accent = BudgetColors.chartLine;
 const _months = [
   'Jan',
   'Feb',
@@ -108,7 +109,7 @@ class _FinancialHistoryChartState extends State<FinancialHistoryChart> {
     final selected = found < 0 ? history.length - 1 : found;
     final month = history.isEmpty ? null : history[selected];
     return Card(
-      color: Colors.white,
+      color: BudgetColors.surface,
       child: DefaultTextStyle.merge(
         style: const TextStyle(color: _ink),
         child: Padding(
@@ -127,7 +128,7 @@ class _FinancialHistoryChartState extends State<FinancialHistoryChart> {
                     ChoiceChip(
                       label: Text(metric.label),
                       selected: _metric == metric,
-                      selectedColor: const Color(0xffd6f3eb),
+                      selectedColor: BudgetColors.selection,
                       labelStyle: const TextStyle(color: _ink),
                       onSelected: (_) => setState(() => _metric = metric),
                     ),
@@ -275,7 +276,8 @@ class _HistoryPainter extends CustomPainter {
       {double width = 76, TextAlign align = TextAlign.right}) {
     final painter = TextPainter(
       text: TextSpan(
-          text: text, style: const TextStyle(color: _ink, fontSize: 11)),
+          text: text, style: const TextStyle(
+              color: _ink, fontSize: 11, fontFamily: 'CircularStd')),
       textDirection: TextDirection.ltr,
       textAlign: align,
       textScaler: textScaler,
@@ -321,7 +323,7 @@ class _HistoryPainter extends CustomPainter {
     double y(int value) =>
         bottom - (value - low) / (high - low) * (bottom - top);
     final grid = Paint()
-      ..color = const Color(0xffdce7e5)
+      ..color = BudgetColors.chartGrid
       ..strokeWidth = 1;
     for (var tick = 0; tick <= 4; tick++) {
       final at = top + tick * (bottom - top) / 4;
@@ -346,7 +348,7 @@ class _HistoryPainter extends CustomPainter {
             Offset(x, bottom + 4),
             4,
             Paint()
-              ..color = const Color(0xff677e7c)
+              ..color = BudgetColors.chartMissing
               ..style = PaintingStyle.stroke);
         continue;
       }

@@ -13,6 +13,7 @@ void main() {
         modules,
         {
           'lib/app.dart',
+          'lib/app_theme.dart',
           'lib/budgeteer.dart',
           'lib/budgeteer_domain.dart',
           'lib/config.dart',

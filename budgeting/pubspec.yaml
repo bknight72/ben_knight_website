@@ -27,7 +27,7 @@ flutter:
   uses-material-design: true
   assets:
     - config.yaml
-    - web/icons/BK-logo.png
+    - web/icons/BigB-logo.png
   fonts:
     - family: CircularStd
       fonts:

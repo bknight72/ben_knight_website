@@ -77,7 +77,7 @@ class NavBar extends StatelessWidget implements PreferredSizeWidget {
               child: Row(
                 children: [
                   Image.asset(
-                    'web/icons/BK-logo.png',
+                    'web/icons/BigB-logo.png',
                     width: 40,
                     height: 40,
                     fit: BoxFit.contain,

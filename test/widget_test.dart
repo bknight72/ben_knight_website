@@ -23,7 +23,7 @@ import 'package:ben_knight_website2/widgets/section_container.dart';
 
 void main() {
   for (final width in [320.0, 400.0, 1200.0]) {
-    testWidgets('Navbar displays the BK logo at width $width', (tester) async {
+    testWidgets('Navbar displays the BigB logo at width $width', (tester) async {
       tester.view.physicalSize = Size(width, 900);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
@@ -36,7 +36,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       final logo = tester.widget<Image>(find.byType(Image));
-      expect((logo.image as AssetImage).assetName, 'web/icons/BK-logo.png');
+      expect((logo.image as AssetImage).assetName, 'web/icons/BigB-logo.png');
       expect(logo.fit, BoxFit.contain);
       expect(logo.excludeFromSemantics, isTrue);
       expect(find.text(PortfolioData.name), findsOneWidget);

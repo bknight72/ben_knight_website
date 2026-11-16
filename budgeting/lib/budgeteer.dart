@@ -5,19 +5,19 @@ import 'package:material_ui/material_ui.dart';
 import 'budgeteer_domain.dart';
 import 'domain.dart';
 import 'repository.dart';
+import 'app_theme.dart';
 
-const _ink = Color(0xff102e2c);
-const _teal = Color(0xff17695c);
-const _canvas = Color(0x00202421);
-const _muted = Color(0xff637570);
-const _danger = Color(0xffa53d43);
+const _ink = BudgetColors.text;
+const _teal = BudgetColors.primary;
+const _muted = BudgetColors.muted;
+const _danger = BudgetColors.error;
 const _palette = <String, Color>{
-  'teal': _teal,
-  'blue': Color(0xff426c9b),
-  'amber': Color(0xffa87522),
-  'rose': Color(0xffa45371),
-  'violet': Color(0xff77629c),
-  'slate': Color(0xff657782),
+  'teal': BudgetColors.groupTeal,
+  'blue': BudgetColors.groupBlue,
+  'amber': BudgetColors.groupAmber,
+  'rose': BudgetColors.groupRose,
+  'violet': BudgetColors.groupViolet,
+  'slate': BudgetColors.groupSlate,
 };
 
 /// A server-backed planning workspace. Bank sources are always read-only.
@@ -312,7 +312,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
   Widget _panel(
           {required Widget child,
           Key? key,
-          Color color = Colors.white,
+          Color color = BudgetColors.surface,
           EdgeInsetsGeometry padding = const EdgeInsets.all(20),
           Color? outline}) =>
       Container(
@@ -346,7 +346,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                   child: Center(child: CircularProgressIndicator())),
             if (_error != null) ...[
               _panel(
-                  color: const Color(0xfffff1ed),
+                  color: BudgetColors.errorSurface,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -434,7 +434,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
         ],
         SegmentedButton<int>(
           style: ButtonStyle(
-            foregroundColor: const WidgetStatePropertyAll(Colors.white),
+            foregroundColor: const WidgetStatePropertyAll(BudgetColors.onPrimary),
             backgroundColor: WidgetStateProperty.resolveWith((states) =>
                 states.contains(WidgetState.selected) ? _teal : _ink),
           ),
@@ -658,7 +658,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
         const barWidth = 19.0;
         const gap = 8.0;
         const labelHeight = 38.0;
-        const overflowColor = Color(0xff7f1d1d);
+        const overflowColor = BudgetColors.deficit;
         final plannedFlows = <({String source, String target, int amount})>[];
         void flow(String source, String target, int amount) {
           if (amount > 0) {
@@ -703,7 +703,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
           flow('${deposit['id']}', 'income', amount);
         }
         add(1, 'income', 'Income', allocation.deposits,
-            const Color(0xff22c55e));
+            BudgetColors.success);
         add(1, 'overflow', 'Over Income', allocation.deficit, overflowColor);
         void visit(Json group, int column) {
           final id = group['id'] as String;
@@ -1099,7 +1099,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                     borderRadius: BorderRadius.circular(7)),
                 child: Text('$position',
                     style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.w700))),
+                        color: BudgetColors.onPrimary, fontWeight: FontWeight.w700))),
             const SizedBox(width: 10),
             Expanded(
                 child: Column(
@@ -1193,7 +1193,9 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
       margin: const EdgeInsets.only(top: 4),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-          color: selected ? const Color(0xffe8f2ec) : _canvas,
+          color: selected
+              ? BudgetColors.selection
+              : BudgetColors.transactionBackground,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
               color: selected ? _teal : Colors.transparent, width: 2)),
@@ -1483,6 +1485,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                                 style: TextStyle(color: _muted, fontSize: 12)),
                             const SizedBox(height: 16),
                             DropdownButtonFormField<String>(
+                              dropdownColor: BudgetColors.dropdownBackground,
                               initialValue: sourceId,
                               isExpanded: true,
                               decoration: const InputDecoration(
@@ -1555,6 +1558,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                             ...[
                               const SizedBox(height: 16),
                               DropdownButtonFormField<String>(
+                                dropdownColor: BudgetColors.dropdownBackground,
                                 key: ValueKey(
                                     'entry-group-$validGroup-$groupId'),
                                 initialValue: validGroup ? groupId : '',
@@ -1663,7 +1667,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                                               decoration: BoxDecoration(
                                                   gradient: LinearGradient(
                                                       colors: [
-                                            Colors.white,
+                                            BudgetColors.colorPickerWhite,
                                             HSVColor.fromAHSV(1, hsv.hue, 1, 1)
                                                 .toColor()
                                           ])))),
@@ -1677,7 +1681,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                                                           .bottomCenter,
                                                       colors: [
                                             Colors.transparent,
-                                            Colors.black
+                                            BudgetColors.colorPickerBlack
                                           ])))),
                                       Positioned(
                                           left: (hsv.saturation *
@@ -1694,7 +1698,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                                                   decoration: BoxDecoration(
                                                       shape: BoxShape.circle,
                                                       border: Border.all(
-                                                          color: Colors.white,
+                                                          color: BudgetColors.colorPickerWhite,
                                                           width: 2),
                                                       boxShadow: const [
                                                         BoxShadow(blurRadius: 2)
@@ -1809,6 +1813,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                               const SizedBox(height: 12),
                               if (kind == 'withdrawal')
                                 DropdownButtonFormField<String>(
+                                  dropdownColor: BudgetColors.dropdownBackground,
                                   key:
                                       ValueKey('parent-$validParent-$parentId'),
                                   initialValue: validParent ? parentId : '',

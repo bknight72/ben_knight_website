@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:private_budgeting/config.dart';
 import 'package:private_budgeting/main.dart' as entry;
 import 'package:private_budgeting/app.dart';
+import 'package:private_budgeting/app_theme.dart';
 import 'package:private_budgeting/repository.dart';
 import 'workspace_test.dart' show FixtureRepository;
 
@@ -23,10 +24,53 @@ void main() {
     expect(theme.textTheme.bodyMedium?.fontFamily, 'CircularStd');
     expect(theme.textTheme.headlineLarge?.fontFamily, 'CircularStd');
     expect(theme.primaryTextTheme.titleLarge?.fontFamily, 'CircularStd');
+    expect(theme.colorScheme.primary, BudgetColors.primary);
+    expect(theme.scaffoldBackgroundColor, BudgetColors.background);
+    expect(theme.cardTheme.color, BudgetColors.surface);
+    expect(theme.inputDecorationTheme.fillColor, BudgetColors.inputBackground);
+    expect(theme.colorScheme.surfaceContainer, BudgetColors.surface);
+    expect(theme.colorScheme.surfaceContainerLow, BudgetColors.surface);
+    expect(theme.colorScheme.error, BudgetColors.error);
     expect(tester.takeException(), isNull);
   });
+  test('palette text pairs remain readable and semantic states distinct', () {
+    double contrast(Color a, Color b) {
+      final x = a.computeLuminance();
+      final y = b.computeLuminance();
+      return x > y ? (x + .05) / (y + .05) : (y + .05) / (x + .05);
+    }
+    for (final pair in [
+      (BudgetColors.text, BudgetColors.inputBackground),
+      (BudgetColors.text, BudgetColors.dropdownBackground),
+      (BudgetColors.text, BudgetColors.transactionBackground),
+      (BudgetColors.text, BudgetColors.surface),
+      (BudgetColors.muted, BudgetColors.inputBackground),
+      (BudgetColors.onPrimary, BudgetColors.primary),
+      (BudgetColors.onDark, BudgetColors.forest),
+      (BudgetColors.onDarkMuted, BudgetColors.forest),
+      (BudgetColors.error, BudgetColors.errorSurface),
+      (BudgetColors.warning, BudgetColors.surface),
+    ]) {
+      expect(contrast(pair.$1, pair.$2), greaterThanOrEqualTo(4.5));
+    }
+    expect(BudgetColors.background.a, 1);
+    expect(BudgetColors.error, isNot(BudgetColors.success));
+    expect(BudgetColors.warning, isNot(BudgetColors.success));
+  });
+  test('all budgeting UI color literals live in the shared palette', () {
+    for (final file in Directory('lib').listSync(recursive: true)
+        .whereType<File>().where((file) => file.path.endsWith('.dart') &&
+            !file.path.endsWith('app_theme.dart'))) {
+      final source = file.readAsStringSync();
+      expect(RegExp(r'Color\(0x[0-9a-fA-F]{8}\)').hasMatch(source), isFalse,
+          reason: '${file.path} must use BudgetColors');
+      expect(RegExp(r'(?<!Budget)\bColors\.(?!transparent\b)\w+')
+          .hasMatch(source), isFalse,
+          reason: '${file.path} must use semantic palette roles');
+    }
+  });
   for (final light in [false, true]) {
-    testWidgets('brand uses the BK logo with light=$light', (tester) async {
+    testWidgets('brand uses the BigB logo with light=$light', (tester) async {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -36,10 +80,12 @@ void main() {
       );
       await tester.pumpAndSettle();
       final logo = tester.widget<Image>(find.byType(Image));
-      expect((logo.image as AssetImage).assetName, 'web/icons/BK-logo.png');
+      expect((logo.image as AssetImage).assetName, 'web/icons/BigB-logo.png');
       expect(logo.fit, BoxFit.contain);
       expect(logo.excludeFromSemantics, isTrue);
       expect(find.text("Ben's Budgeteering"), findsOneWidget);
+      expect(tester.widget<Text>(find.text("Ben's Budgeteering")).style?.color,
+          light ? BudgetColors.onDark : BudgetColors.text);
       expect(tester.takeException(), isNull);
     });
   }

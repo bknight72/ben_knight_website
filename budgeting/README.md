@@ -26,6 +26,36 @@ Amounts are integer USD cents. Cash inflows are positive; credit balances are in
 
 The `private` schema stores the immutable owner mapping, provider mapping, jobs, webhook deduplication and refresh reservations. Browser roles cannot access it. Financial tables and RPCs require the provisioned owner and verified MFA, including direct PostgREST calls. Service-role credentials bypass RLS and must remain backend-only. Auth uses the explicitly approved personal-app email/password + TOTP exception, not Novacoast OIDC.
 
+## Theme Customization
+
+Edit `BudgetColors` in `lib/app_theme.dart` to change the app-wide palette.
+`primary`, `leaf`, and `forest` reflect the BigB logo gradient. Semantic roles
+cover surfaces, text, navigation, selections, chart lines/grid/missing values,
+success, warnings, and errors. `BudgetTheme.data` applies these roles to Material
+controls; the same roles are used by authentication, every workspace page,
+Budgeteer dialogs/diagrams, and the custom financial-history painter.
+Keep foreground/background pairs readable when customizing. CircularStd remains
+the default font, including custom chart labels.
+
+`background` controls the page canvas only. Customize `inputBackground` for
+field fill, `dropdownBackground` for opened dropdown menus, and
+`transactionBackground` for unselected Budgeteer withdrawal rows and transaction
+icons. These are independent color values, not aliases of the page background.
+`surface` controls panels and dialog surfaces; `selection` controls selected rows.
+
+The pre-Flutter loader cannot import Dart: update the matching colors in
+`web/index.html` (background, text, spinner and theme-color) and
+`web/manifest.json` (background_color and theme_color) alongside palette changes.
+The default background is `#f2f6ef`, text `#142c1b`, primary `#186818`, border
+`#ceddc6`, and browser theme `#084828`. Rebuild the app after editing.
+
+Saved Budgeteer preset/custom group colors are data, not brand colors. They keep
+their original values when the brand changes; the preserved preset definitions
+are grouped separately in `BudgetColors`. QR-code and color-picker black/white
+roles are intentionally independent from surfaces so changing the theme does
+not break scanning or color selection. Branding uses local `BigB-logo.png`
+copies and `BigB-icon-*.png` browser icons in each independent website.
+
 ## Budgeteer
 
 Budgeteer has separate **Tower of Money**, **Withdrawals**, and **Deposits** tabs. Transaction creation and editing live on the corresponding withdrawal/deposit tab. Both lists show Ungrouped first only when it contains transactions; it remains an available assignment even while hidden. This is display order only: named withdrawal groups still fund in monthly priority order, followed by Ungrouped. Empty named groups remain available for editing.
