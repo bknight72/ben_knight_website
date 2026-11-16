@@ -2368,7 +2368,8 @@ void main() {
     await _page(tester, repository, transactions: transactions);
     await _page(tester, repository, transactions: transactions);
     await _page(tester, repository, transactions: [
-      for (final row in transactions.reversed) {...row, 'note': 'Unrelated note'},
+      for (final row in transactions.reversed)
+        {...row, 'note': 'Unrelated note'},
     ]);
     expect(repository.months, ['2026-11']);
     expect(repository.inclusions, hasLength(1));
@@ -2567,7 +2568,8 @@ void main() {
       await _page(tester, repository,
           transactions: repository.sources, settle: false);
       repository.pending = null;
-      save.completeError(Exception(conflict ? 'budgeteer_conflict' : 'offline'));
+      save.completeError(
+          Exception(conflict ? 'budgeteer_conflict' : 'offline'));
       await tester.pumpAndSettle();
       expect(repository.inclusions, hasLength(1));
       expect(repository.months, ['2026-11']);
@@ -2655,7 +2657,8 @@ void main() {
     await _page(tester, repository, transactions: [
       {'id': 'arrival', 'amount_minor': -100, 'status': 'posted'},
     ]);
-    expect(find.text('Could not load this plan. Please retry.'), findsOneWidget);
+    expect(
+        find.text('Could not load this plan. Please retry.'), findsOneWidget);
     expect(find.byTooltip('Edit Rent'), findsNothing);
     expect(find.text('Add withdrawal'), findsNothing);
     repository.inclusionError = null;
