@@ -11,13 +11,38 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      BUDGETING_REUSE_TOOLING: 'true'
+      BUDGETING_LOCAL_REUSE_IMAGE: 'true'
     concurrency:
       group: budgeting-validation-${{ github.workflow }}-${{ github.ref }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Tooling cache identity
+        id: tooling
+        run: |
+          printf 'day=%s\n' "$(date -u +%F)" >> "$GITHUB_OUTPUT"
+          printf 'uid=%s\n' "$(id -u)" >> "$GITHUB_OUTPUT"
+          printf 'BUDGETING_PUB_CACHE_VOLUME=budgeting-pub-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: tooling-cache
+        with:
+          path: ${{ runner.temp }}/budgeting-tooling.tar
+          key: budgeting-tooling-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.tooling.outputs.uid }}-${{ steps.tooling.outputs.day }}-${{ hashFiles('budgeting/Dockerfile', 'budgeting/scripts/browser.Dockerfile', 'budgeting/integration_test/artifact_test.js', 'budgeting/supabase/tests/Dockerfile', 'budgeting/recovery/Dockerfile', 'budgeting/recovery/run.sh', 'budgeting/recovery/connect.py', 'budgeting/recovery/sanitize.sql') }}
+      - name: Restore tooling images
+        if: steps.tooling-cache.outputs.cache-hit == 'true'
+        run: docker load --input "$RUNNER_TEMP/budgeting-tooling.tar"
+      - name: Build daily tooling images
+        if: steps.tooling-cache.outputs.cache-hit != 'true'
+        run: |
+          docker build --pull --no-cache --target tooling --build-arg "BUILDER_UID=$(id -u)" -t budgeting-flutter:latest budgeting
+          docker build --pull --no-cache -f budgeting/scripts/browser.Dockerfile -t budgeting-browser:latest budgeting
+          docker build --pull --no-cache -f budgeting/supabase/tests/Dockerfile -t budgeting-supabase-test:latest budgeting/supabase/tests
+          docker build --pull --no-cache -t budgeting-recovery:latest budgeting/recovery
+          docker save --output "$RUNNER_TEMP/budgeting-tooling.tar" budgeting-flutter:latest budgeting-browser:latest budgeting-supabase-test:latest budgeting-recovery:latest
       - name: Containerized validation and coverage
         run: sh budgeting/scripts/validate.sh
       - name: Package static artifact
@@ -30,12 +55,15 @@ jobs:
         run: |
           BUDGETING_MOCK_STRIPE=true sh budgeting/scripts/build-local-browser.sh
           BUDGETING_MOCK_STRIPE=true BUDGETING_BROWSER_INTEGRATION=true BUDGETING_BROWSER_ARTIFACT="$GITHUB_WORKSPACE/budgeting/build/local-browser-stripe" sh budgeting/supabase/tests/run-local.sh
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - name: Remove job dependency cache
+        if: always()
+        run: docker volume rm "$BUDGETING_PUB_CACHE_VOLUME" || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: budgeting-static-unconfigured
           path: budgeting/.vercel/output
           include-hidden-files: true
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: budgeting-coverage
@@ -60,7 +88,7 @@ jobs:
       STRIPE_ENABLED: ${{ vars.STRIPE_ENABLED || 'false' }}
       STRIPE_PUBLISHABLE_KEY: ${{ vars.STRIPE_PUBLISHABLE_KEY || '' }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -105,7 +133,7 @@ jobs:
             budgeting/scripts/release.ts manifest release
       - name: Retain immutable release
         id: upload
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: budgeting-release-${{ github.run_id }}-${{ github.run_attempt }}
           path: release/
@@ -168,13 +196,13 @@ jobs:
           fi
           test "$BUDGETING_PRODUCTION_URL" = 'https://budgeting.benknight.dev'
       - name: Checkout trusted verification tooling
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.release-build.outputs.source-sha }}
           persist-credentials: false
           sparse-checkout: budgeting
       - name: Download exact same-run release artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.release-build.outputs.artifact-id }}
           path: release

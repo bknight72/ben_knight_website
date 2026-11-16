@@ -4,7 +4,9 @@ cd "$(dirname "$0")/.."
 name="budgeting-browser-$$"
 trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT INT TERM
 test -f build/web/main.dart.js || { printf '%s\n' 'Build the release artifact before browser tests.' >&2; exit 1; }
-if [ -n "${BUILD_CA_FILE:-}" ]; then
+if [ "${BUDGETING_REUSE_TOOLING:-false}" = true ]; then
+  docker image inspect budgeting-browser:latest >/dev/null
+elif [ -n "${BUILD_CA_FILE:-}" ]; then
   docker build --secret "id=build_ca,src=$BUILD_CA_FILE" -f scripts/browser.Dockerfile -t budgeting-browser:latest .
 else
   docker build -f scripts/browser.Dockerfile -t budgeting-browser:latest .

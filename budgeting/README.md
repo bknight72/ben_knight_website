@@ -95,6 +95,22 @@ Budgeteer domain, widget, repository, and SQL tests run through the existing con
 
 Run commands from the repository root unless a block explicitly changes the working directory. The scripts locate their own package directory. Images use `latest` and dependencies are unpinned where supported; repeat validation after rebuilds because upstream changes can alter results. Do not change root portfolio dependencies to resolve budgeting dependencies.
 
+GitHub validation caches tooling-only Docker images by UTC day, runner platform,
+builder UID, and tooling inputs. No cross-day fallback is used. Cold runs refresh
+images; warm runs load them before the usual validation scripts. Application
+source, environment files, and release output are not part of this cache.
+Validation and local browser builds share Pub downloads through the Docker volume
+`budgeting-pub-<uid>`; override `BUDGETING_PUB_CACHE_VOLUME` to isolate concurrent
+runs. GitHub uses a unique job volume and removes it afterward. Local volumes
+persist until explicitly removed with `docker volume rm budgeting-pub-<uid>`.
+Dependency resolution still runs online; downloaded packages are reused, not
+locked. The Supabase integration tooling image includes its CLI, so rebuild that
+image when refreshing tools rather than installing the CLI during each test run.
+`BUDGETING_REUSE_TOOLING=true` requires prebuilt Flutter, browser, and recovery
+images; `BUDGETING_LOCAL_REUSE_IMAGE=true` requires the prebuilt Supabase test
+image. CI sets these only after loading or building the current cache. Normal
+local validation still builds images using Docker's layer cache.
+
 ## Environment Variables
 
 `budgeting/.env.example` is a placeholder inventory, not a file to load wholesale into a build. Create private environment files outside the checkout with restrictive permissions, and inject only the variables each operation needs. Never commit `.env`, exported finances, backups, database URLs, access tokens, or age identities. Docker environment values are visible to trusted Docker administrators; protect the host and CI runner accordingly.

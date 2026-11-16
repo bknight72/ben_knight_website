@@ -899,40 +899,60 @@ class _LedgerShellState extends State<LedgerShell> {
                       alignment: Alignment.centerLeft,
                       child: SizedBox(
                           width: wide ? 242 : 304,
-                          child: Visibility(
-                              visible: !collapsed,
-                              maintainSize: true,
-                              maintainAnimation: true,
-                              maintainState: true,
-                              child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  children: [
-                                    const Padding(
-                                        padding:
-                                            EdgeInsets.fromLTRB(28, 38, 28, 42),
-                                        child: FittedBox(
-                                            alignment: Alignment.centerLeft,
-                                            fit: BoxFit.scaleDown,
-                                            child: Brand(light: true))),
-                                    const Padding(
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                        18, 38, 18, 42),
+                                    child: Row(children: [
+                                      Image.asset('web/icons/BigB-logo.png',
+                                          key: const ValueKey('sidebar-logo'),
+                                          width: 36,
+                                          height: 36,
+                                          fit: BoxFit.contain,
+                                          excludeFromSemantics: true),
+                                      if (!collapsed)
+                                        const Expanded(
+                                            child: Padding(
+                                                padding:
+                                                    EdgeInsets.only(left: 12),
+                                                child: FittedBox(
+                                                    fit: BoxFit.scaleDown,
+                                                    alignment:
+                                                        Alignment.centerLeft,
+                                                    child: Text(
+                                                        "Ben's Budgeteering",
+                                                        style: TextStyle(
+                                                            fontSize: 27,
+                                                            fontWeight:
+                                                                FontWeight.w700,
+                                                            letterSpacing: -1,
+                                                            color: BudgetColors
+                                                                .onDark))))),
+                                    ])),
+                                Visibility(
+                                    visible: !collapsed,
+                                    maintainSize: true,
+                                    maintainAnimation: true,
+                                    maintainState: true,
+                                    child: const Padding(
                                         padding: EdgeInsets.only(
                                             left: 30, bottom: 12),
                                         child: Text('WORKSPACE',
                                             style: TextStyle(
                                                 fontSize: 10,
                                                 letterSpacing: 2,
-                                                color: BudgetColors.onDarkMuted))),
-                                  ]))))),
+                                                color: BudgetColors
+                                                    .onDarkMuted)))),
+                              ])))),
               Padding(
-                  padding: EdgeInsets.symmetric(
-                      horizontal: collapsed ? 8 : 22, vertical: 6),
+                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                   child: SizedBox(
                       height: 48, child: monthPicker(collapsed: collapsed))),
               for (var i = 0; i < pages.length; i++)
                 Padding(
-                    padding: EdgeInsets.symmetric(
-                        horizontal: collapsed ? 8 : 14, vertical: 3),
+                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     child: collapsed
                         ? SizedBox(
                             height: 56,
@@ -949,6 +969,9 @@ class _LedgerShellState extends State<LedgerShell> {
                                 onPressed: () => setState(() => page = i),
                                 icon: Icon(icons[i])))
                         : ListTile(
+                            contentPadding:
+                                const EdgeInsets.symmetric(horizontal: 16),
+                            minLeadingWidth: 24,
                             minTileHeight: 56,
                             minVerticalPadding: 0,
                             titleAlignment: ListTileTitleAlignment.center,
@@ -1020,10 +1043,13 @@ class _LedgerShellState extends State<LedgerShell> {
                         icon: const Icon(Icons.logout)))
               else
                 ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+                    minLeadingWidth: 24,
                     minTileHeight: 56,
                     minVerticalPadding: 0,
                     titleAlignment: ListTileTitleAlignment.center,
-                    leading: const Icon(Icons.logout, color: BudgetColors.onDarkMuted),
+                    leading: const Icon(Icons.logout,
+                        color: BudgetColors.onDarkMuted),
                     title: const Text('Sign out',
                         style: TextStyle(color: BudgetColors.onDarkMuted)),
                     onTap: widget.onLogout),
@@ -1130,8 +1156,10 @@ class _LedgerShellState extends State<LedgerShell> {
                                             child: CircularProgressIndicator()))
                                   else if (error == null)
                                     switch (page) {
-                                      0 => overview(
-                                          size.maxWidth - (wide ? 314 : 40)),
+                                      0 => overview(size.maxWidth -
+                                          (wide
+                                              ? (collapsed ? 144 : 314)
+                                              : 40)),
                                       1 => accountsPage(),
                                       2 => transactionsPage(),
                                       3 => BudgeteerPage(
@@ -1165,13 +1193,19 @@ class _LedgerShellState extends State<LedgerShell> {
               onPressed: chooseMonth,
               color: BudgetColors.darkHighlight,
               icon: const Icon(Icons.calendar_today_outlined, size: 18))
-          : OutlinedButton.icon(
+          : OutlinedButton(
               onPressed: chooseMonth,
               style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
                   foregroundColor: BudgetColors.darkHighlight,
                   side: const BorderSide(color: BudgetColors.darkBorder)),
-              icon: const Icon(Icons.calendar_today_outlined, size: 16),
-              label: Text(month)),
+              child: Row(children: [
+                const SizedBox(
+                    width: 24,
+                    child: Icon(Icons.calendar_today_outlined, size: 18)),
+                const SizedBox(width: 16),
+                Text(month),
+              ])),
     );
   }
 
@@ -1189,7 +1223,7 @@ class _LedgerShellState extends State<LedgerShell> {
                           child:
                               Column(mainAxisSize: MainAxisSize.min, children: [
                         DropdownButtonFormField<int>(
-                          dropdownColor: BudgetColors.dropdownBackground,
+                            dropdownColor: BudgetColors.dropdownBackground,
                             initialValue: year,
                             decoration:
                                 const InputDecoration(labelText: 'Year'),
@@ -1295,12 +1329,15 @@ class _LedgerShellState extends State<LedgerShell> {
                         Expanded(
                             child: Text(metrics[i].$1,
                                 style: TextStyle(
-                                    color: i == 0 ? BudgetColors.onDarkMuted : muted,
+                                    color: i == 0
+                                        ? BudgetColors.onDarkMuted
+                                        : muted,
                                     fontSize: 10,
                                     letterSpacing: 1.1))),
                         const SizedBox(width: 8),
                         Icon(metrics[i].$4,
-                            color: i == 0 ? BudgetColors.onDarkMuted : teal, size: 20)
+                            color: i == 0 ? BudgetColors.onDarkMuted : teal,
+                            size: 20)
                       ]),
                       const SizedBox(height: 24),
                       Text(metrics[i].$2,
@@ -1313,7 +1350,8 @@ class _LedgerShellState extends State<LedgerShell> {
                       Text(metrics[i].$3,
                           style: TextStyle(
                               fontSize: 11,
-                              color: i == 0 ? BudgetColors.onDarkMuted : muted)),
+                              color:
+                                  i == 0 ? BudgetColors.onDarkMuted : muted)),
                     ]),
               ))
       ]),
@@ -1406,7 +1444,8 @@ class _LedgerShellState extends State<LedgerShell> {
         ],
         if (connectionNotice != null) Text(connectionNotice!),
         if (pendingError != null)
-          Text(pendingError!, style: const TextStyle(color: BudgetColors.warning)),
+          Text(pendingError!,
+              style: const TextStyle(color: BudgetColors.warning)),
         if (!bankLinkingEnabled)
           const Text(
               'Bank linking is disabled. CSV imports and manual snapshots are available. Live linking requires owner approval and verified institution coverage.',
@@ -1422,7 +1461,8 @@ class _LedgerShellState extends State<LedgerShell> {
             Text(
                 '${refreshUsage!['month']}: ${refreshUsage!['reservedAttempts']} / ${refreshUsage!['limit']} attempts reserved. ${refreshUsage!['remainingAttempts']} remaining.'),
           if (usageError != null)
-            Text(usageError!, style: const TextStyle(color: BudgetColors.warning)),
+            Text(usageError!,
+                style: const TextStyle(color: BudgetColors.warning)),
         ])),
         const SizedBox(height: 20),
         if (accounts.isEmpty)
@@ -1615,7 +1655,7 @@ class _LedgerShellState extends State<LedgerShell> {
           SizedBox(
               width: 230,
               child: DropdownButtonFormField<String>(
-                dropdownColor: BudgetColors.dropdownBackground,
+                  dropdownColor: BudgetColors.dropdownBackground,
                   isExpanded: true,
                   initialValue: accountFilter,
                   decoration: const InputDecoration(labelText: 'Account'),
@@ -1630,7 +1670,7 @@ class _LedgerShellState extends State<LedgerShell> {
           SizedBox(
               width: 200,
               child: DropdownButtonFormField<String>(
-                dropdownColor: BudgetColors.dropdownBackground,
+                  dropdownColor: BudgetColors.dropdownBackground,
                   initialValue: statusFilter,
                   decoration: const InputDecoration(labelText: 'Status'),
                   items: [
@@ -1641,7 +1681,7 @@ class _LedgerShellState extends State<LedgerShell> {
           SizedBox(
               width: 230,
               child: DropdownButtonFormField<String>(
-                dropdownColor: BudgetColors.dropdownBackground,
+                  dropdownColor: BudgetColors.dropdownBackground,
                   initialValue: categoryFilter,
                   isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Category'),
@@ -1739,8 +1779,9 @@ class _LedgerShellState extends State<LedgerShell> {
                           padding: const EdgeInsets.only(top: 10),
                           child: Text('${money(limit - spent)} remaining',
                               style: TextStyle(
-                                  color:
-                                      spent > limit ? BudgetColors.warning : teal,
+                                  color: spent > limit
+                                      ? BudgetColors.warning
+                                      : teal,
                                   fontSize: 12)))
                   ]);
             }))),
@@ -1855,7 +1896,8 @@ class _LedgerShellState extends State<LedgerShell> {
                                 .expand((f) => [f, const SizedBox(height: 16)]),
                             if (message != null)
                               Text(message!,
-                                  style: const TextStyle(color: BudgetColors.error))
+                                  style: const TextStyle(
+                                      color: BudgetColors.error))
                           ]))),
                   actions: [
                     TextButton(
@@ -1916,7 +1958,7 @@ class _LedgerShellState extends State<LedgerShell> {
           decoration: const InputDecoration(
               labelText: 'Last four digits only (optional)')),
       DropdownButtonFormField<String>(
-        dropdownColor: BudgetColors.dropdownBackground,
+          dropdownColor: BudgetColors.dropdownBackground,
           isExpanded: true,
           initialValue: type,
           decoration: const InputDecoration(labelText: 'Balance semantics'),
@@ -1999,7 +2041,7 @@ class _LedgerShellState extends State<LedgerShell> {
       Text(
           '${transaction['description']} / ${money(integer(transaction['amount_minor']))}'),
       DropdownButtonFormField<String>(
-        dropdownColor: BudgetColors.dropdownBackground,
+          dropdownColor: BudgetColors.dropdownBackground,
           initialValue: category,
           decoration: const InputDecoration(labelText: 'Category'),
           items: [
@@ -2053,7 +2095,7 @@ class _LedgerShellState extends State<LedgerShell> {
           maxLength: 60,
           decoration: const InputDecoration(labelText: 'Category name')),
       DropdownButtonFormField<String>(
-        dropdownColor: BudgetColors.dropdownBackground,
+          dropdownColor: BudgetColors.dropdownBackground,
           isExpanded: true,
           initialValue: kind,
           decoration: const InputDecoration(labelText: 'Kind'),
@@ -2100,7 +2142,7 @@ class _LedgerShellState extends State<LedgerShell> {
     final amount = TextEditingController();
     await form('Set budget for $month', [
       DropdownButtonFormField<String>(
-        dropdownColor: BudgetColors.dropdownBackground,
+          dropdownColor: BudgetColors.dropdownBackground,
           initialValue: category,
           decoration: const InputDecoration(labelText: 'Category'),
           items: [
@@ -2299,7 +2341,7 @@ class _ImportDialogState extends State<ImportDialog> {
                         style: TextStyle(color: muted, fontSize: 12)),
                     const SizedBox(height: 18),
                     DropdownButtonFormField<String>(
-                      dropdownColor: BudgetColors.dropdownBackground,
+                        dropdownColor: BudgetColors.dropdownBackground,
                         initialValue: account,
                         decoration: const InputDecoration(
                             labelText: 'Destination account'),
@@ -2333,7 +2375,7 @@ class _ImportDialogState extends State<ImportDialog> {
                     column('currency', 'Currency column (optional; USD only)',
                         optional: true),
                     DropdownButtonFormField<String>(
-                      dropdownColor: BudgetColors.dropdownBackground,
+                        dropdownColor: BudgetColors.dropdownBackground,
                         initialValue: mapping['dateFormat'] as String,
                         decoration:
                             const InputDecoration(labelText: 'Date format'),
@@ -2349,7 +2391,7 @@ class _ImportDialogState extends State<ImportDialog> {
                             change(() => mapping['dateFormat'] = v)),
                     const SizedBox(height: 14),
                     DropdownButtonFormField<String>(
-                      dropdownColor: BudgetColors.dropdownBackground,
+                        dropdownColor: BudgetColors.dropdownBackground,
                         isExpanded: true,
                         initialValue: mapping['sign'] as String,
                         decoration: const InputDecoration(
@@ -2371,7 +2413,8 @@ class _ImportDialogState extends State<ImportDialog> {
                       Padding(
                           padding: const EdgeInsets.only(top: 16),
                           child: Text(error!,
-                              style: const TextStyle(color: BudgetColors.error))),
+                              style:
+                                  const TextStyle(color: BudgetColors.error))),
                     if (preview != null) ...[
                       const Divider(height: 32),
                       Text('Server preview',
@@ -2386,7 +2429,8 @@ class _ImportDialogState extends State<ImportDialog> {
                               e is Map
                                   ? 'Row ${e['row']}: ${e['message']}'
                                   : '$e',
-                              style: const TextStyle(color: BudgetColors.error)),
+                              style:
+                                  const TextStyle(color: BudgetColors.error)),
                       if (preview!['rows'] is List)
                         for (final row in (preview!['rows'] as List).take(10))
                           Padding(

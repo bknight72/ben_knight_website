@@ -13,8 +13,9 @@ if [ -n "${BUILD_CA_FILE:-}" ]; then
 else
   set --
 fi
-docker run --rm -u root "$@" -e "LOCAL_STRIPE_ENABLED=$STRIPE_ENABLED" -e "LOCAL_STRIPE_KEY=$STRIPE_KEY" -e "LOCAL_BROWSER_OUTPUT=$OUTPUT" -e "LOCAL_PUB_OFFLINE=${BUDGETING_PUB_OFFLINE:-false}" -v "$PWD:/workspace" -w /workspace "${BUDGETING_FLUTTER_IMAGE:-budgeting-flutter:latest}" sh -ec '
+docker run --rm -u root "$@" -v "${BUDGETING_PUB_CACHE_VOLUME:-budgeting-pub-$(id -u)}:/home/builder/.pub-cache" -e "LOCAL_STRIPE_ENABLED=$STRIPE_ENABLED" -e "LOCAL_STRIPE_KEY=$STRIPE_KEY" -e "LOCAL_BROWSER_OUTPUT=$OUTPUT" -e "LOCAL_PUB_OFFLINE=${BUDGETING_PUB_OFFLINE:-false}" -v "$PWD:/workspace" -w /workspace "${BUDGETING_FLUTTER_IMAGE:-budgeting-flutter:latest}" sh -ec '
   update-ca-certificates >/dev/null
+  chown builder:builder /home/builder/.pub-cache
   exec su builder -s /bin/sh -c '\''
     set -eu
     export PATH=/opt/flutter/bin:$PATH

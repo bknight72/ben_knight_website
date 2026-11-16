@@ -5,7 +5,7 @@ export STRIPE_ENABLED=false STRIPE_LIVE_AUTHORIZED=false
 # Bound transient registry failures; all package operations remain container-only.
 export npm_config_fetch_retries=2 npm_config_fetch_timeout=30000
 supabase_cli() {
-  if command -v supabase >/dev/null 2>&1; then supabase "$@"; else npx --yes supabase "$@"; fi
+  supabase "$@"
 }
 cleanup() {
   if [ -n "${LOCAL_BROWSER_SERVER:-}" ]; then docker rm -f "$LOCAL_BROWSER_SERVER" >/dev/null 2>&1 || true; fi

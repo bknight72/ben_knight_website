@@ -276,7 +276,8 @@ class _HistoryPainter extends CustomPainter {
       {double width = 76, TextAlign align = TextAlign.right}) {
     final painter = TextPainter(
       text: TextSpan(
-          text: text, style: const TextStyle(
+          text: text,
+          style: const TextStyle(
               color: _ink, fontSize: 11, fontFamily: 'CircularStd')),
       textDirection: TextDirection.ltr,
       textAlign: align,

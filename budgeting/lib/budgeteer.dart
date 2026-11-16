@@ -434,7 +434,8 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
         ],
         SegmentedButton<int>(
           style: ButtonStyle(
-            foregroundColor: const WidgetStatePropertyAll(BudgetColors.onPrimary),
+            foregroundColor:
+                const WidgetStatePropertyAll(BudgetColors.onPrimary),
             backgroundColor: WidgetStateProperty.resolveWith((states) =>
                 states.contains(WidgetState.selected) ? _teal : _ink),
           ),
@@ -702,8 +703,7 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
               _color(deposit));
           flow('${deposit['id']}', 'income', amount);
         }
-        add(1, 'income', 'Income', allocation.deposits,
-            BudgetColors.success);
+        add(1, 'income', 'Income', allocation.deposits, BudgetColors.success);
         add(1, 'overflow', 'Over Income', allocation.deficit, overflowColor);
         void visit(Json group, int column) {
           final id = group['id'] as String;
@@ -1099,7 +1099,8 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                     borderRadius: BorderRadius.circular(7)),
                 child: Text('$position',
                     style: const TextStyle(
-                        color: BudgetColors.onPrimary, fontWeight: FontWeight.w700))),
+                        color: BudgetColors.onPrimary,
+                        fontWeight: FontWeight.w700))),
             const SizedBox(width: 10),
             Expanded(
                 child: Column(
@@ -1684,13 +1685,12 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                                             BudgetColors.colorPickerBlack
                                           ])))),
                                       Positioned(
-                                          left: (hsv.saturation *
-                                                      constraints.maxWidth -
+                                          left: (hsv.saturation * constraints.maxWidth -
                                                   7)
                                               .clamp(0.0,
                                                   constraints.maxWidth - 14),
-                                          top: ((1 - hsv.value) * 160 - 7)
-                                              .clamp(0.0, 146.0),
+                                          top: ((1 - hsv.value) * 160 - 7).clamp(
+                                              0.0, 146.0),
                                           child: IgnorePointer(
                                               child: Container(
                                                   width: 14,
@@ -1698,7 +1698,8 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                                                   decoration: BoxDecoration(
                                                       shape: BoxShape.circle,
                                                       border: Border.all(
-                                                          color: BudgetColors.colorPickerWhite,
+                                                          color: BudgetColors
+                                                              .colorPickerWhite,
                                                           width: 2),
                                                       boxShadow: const [
                                                         BoxShadow(blurRadius: 2)
@@ -1813,7 +1814,8 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                               const SizedBox(height: 12),
                               if (kind == 'withdrawal')
                                 DropdownButtonFormField<String>(
-                                  dropdownColor: BudgetColors.dropdownBackground,
+                                  dropdownColor:
+                                      BudgetColors.dropdownBackground,
                                   key:
                                       ValueKey('parent-$validParent-$parentId'),
                                   initialValue: validParent ? parentId : '',

@@ -99,6 +99,13 @@ void main() {
     final iconPositions = [
       for (final icon in sidebarIcons) tester.getCenter(find.byIcon(icon)).dy,
     ];
+    for (final icon in sidebarIcons) {
+      expect(tester.getCenter(find.byIcon(icon)).dx, closeTo(36, .1));
+    }
+    final logo = find.byKey(const ValueKey('sidebar-logo'));
+    final logoPosition = tester.getCenter(logo);
+    expect(logoPosition.dx, closeTo(36, .1));
+    final togglePosition = tester.getCenter(find.byTooltip('Collapse sidebar'));
     await tester.tap(find.byTooltip('Collapse sidebar'));
     await tester.pumpAndSettle();
     final rail = find
@@ -107,7 +114,12 @@ void main() {
             matching: find.byType(SizedBox))
         .first;
     expect(tester.getSize(rail), const Size(72, 1100));
+    expect(logo.hitTestable(), findsOneWidget);
+    expect(tester.getCenter(logo), logoPosition);
+    expect(tester.getCenter(find.byTooltip('Expand sidebar')), togglePosition);
     for (var i = 0; i < sidebarIcons.length; i++) {
+      expect(
+          tester.getCenter(find.byIcon(sidebarIcons[i])).dx, closeTo(36, .1));
       expect(tester.getCenter(find.byIcon(sidebarIcons[i])).dy,
           closeTo(iconPositions[i], .1));
     }

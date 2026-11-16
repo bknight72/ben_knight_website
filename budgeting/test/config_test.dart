@@ -39,6 +39,7 @@ void main() {
       final y = b.computeLuminance();
       return x > y ? (x + .05) / (y + .05) : (y + .05) / (x + .05);
     }
+
     for (final pair in [
       (BudgetColors.text, BudgetColors.inputBackground),
       (BudgetColors.text, BudgetColors.dropdownBackground),
@@ -58,14 +59,18 @@ void main() {
     expect(BudgetColors.warning, isNot(BudgetColors.success));
   });
   test('all budgeting UI color literals live in the shared palette', () {
-    for (final file in Directory('lib').listSync(recursive: true)
-        .whereType<File>().where((file) => file.path.endsWith('.dart') &&
+    for (final file in Directory('lib')
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where((file) =>
+            file.path.endsWith('.dart') &&
             !file.path.endsWith('app_theme.dart'))) {
       final source = file.readAsStringSync();
       expect(RegExp(r'Color\(0x[0-9a-fA-F]{8}\)').hasMatch(source), isFalse,
           reason: '${file.path} must use BudgetColors');
-      expect(RegExp(r'(?<!Budget)\bColors\.(?!transparent\b)\w+')
-          .hasMatch(source), isFalse,
+      expect(
+          RegExp(r'(?<!Budget)\bColors\.(?!transparent\b)\w+').hasMatch(source),
+          isFalse,
           reason: '${file.path} must use semantic palette roles');
     }
   });
