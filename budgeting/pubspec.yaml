@@ -27,3 +27,27 @@ flutter:
   uses-material-design: true
   assets:
     - config.yaml
+    - web/icons/BK-logo.png
+  fonts:
+    - family: CircularStd
+      fonts:
+        - asset: web/assets/fonts/CircularStd-Book.ttf
+          weight: 400
+        - asset: web/assets/fonts/CircularStd-BookItalic.ttf
+          weight: 400
+          style: italic
+        - asset: web/assets/fonts/CircularStd-Medium.ttf
+          weight: 500
+        - asset: web/assets/fonts/CircularStd-MediumItalic.ttf
+          weight: 500
+          style: italic
+        - asset: web/assets/fonts/CircularStd-Bold.ttf
+          weight: 700
+        - asset: web/assets/fonts/CircularStd-BoldItalic.ttf
+          weight: 700
+          style: italic
+        - asset: web/assets/fonts/CircularStd-Black.ttf
+          weight: 900
+        - asset: web/assets/fonts/CircularStd-BlackItalic.ttf
+          weight: 900
+          style: italic

@@ -83,7 +83,7 @@ class BudgetApp extends StatelessWidget {
           colorScheme:
               ColorScheme.fromSeed(seedColor: teal, surface: Colors.white),
           scaffoldBackgroundColor: canvas,
-          fontFamily: 'Arial',
+          fontFamily: 'CircularStd',
           textTheme: const TextTheme(
             headlineLarge: TextStyle(
                 fontSize: 34,
@@ -135,8 +135,11 @@ class Brand extends StatelessWidget {
       fit: BoxFit.scaleDown,
       alignment: Alignment.centerLeft,
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.account_balance_wallet_outlined,
-            color: light ? const Color(0xffb7e0b8) : teal, size: 29),
+        Image.asset('web/icons/BK-logo.png',
+            width: 36,
+            height: 36,
+            fit: BoxFit.contain,
+            excludeFromSemantics: true),
         const SizedBox(width: 12),
         Text("Ben's Budgeteering",
             style: TextStyle(

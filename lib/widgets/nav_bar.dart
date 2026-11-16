@@ -76,9 +76,23 @@ class NavBar extends StatelessWidget implements PreferredSizeWidget {
               ),
               child: Row(
                 children: [
-                  Text(
-                    PortfolioData.name,
-                    style: AppTextStyles.navBrand,
+                  Image.asset(
+                    'web/icons/BK-logo.png',
+                    width: 40,
+                    height: 40,
+                    fit: BoxFit.contain,
+                    excludeFromSemantics: true,
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  Flexible(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        PortfolioData.name,
+                        style: AppTextStyles.navBrand,
+                      ),
+                    ),
                   ),
                   const Spacer(),
                   if (wide) ...[

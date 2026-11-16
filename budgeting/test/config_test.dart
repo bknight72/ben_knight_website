@@ -15,6 +15,34 @@ class ConfigRepository extends FixtureRepository {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  testWidgets('default typography uses CircularStd', (tester) async {
+    await tester.pumpWidget(const BudgetApp(configurationError: true));
+    await tester.pumpAndSettle();
+    final context = tester.element(find.byType(EntryFrame));
+    final theme = Theme.of(context);
+    expect(theme.textTheme.bodyMedium?.fontFamily, 'CircularStd');
+    expect(theme.textTheme.headlineLarge?.fontFamily, 'CircularStd');
+    expect(theme.primaryTextTheme.titleLarge?.fontFamily, 'CircularStd');
+    expect(tester.takeException(), isNull);
+  });
+  for (final light in [false, true]) {
+    testWidgets('brand uses the BK logo with light=$light', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(width: 242, child: Brand(light: light)),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final logo = tester.widget<Image>(find.byType(Image));
+      expect((logo.image as AssetImage).assetName, 'web/icons/BK-logo.png');
+      expect(logo.fit, BoxFit.contain);
+      expect(logo.excludeFromSemantics, isTrue);
+      expect(find.text("Ben's Budgeteering"), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
   const valid = '''
 currency: USD
 reporting_timezone: America/Denver

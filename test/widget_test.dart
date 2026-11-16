@@ -22,6 +22,28 @@ import 'package:ben_knight_website2/widgets/project_detail_dialog.dart';
 import 'package:ben_knight_website2/widgets/section_container.dart';
 
 void main() {
+  for (final width in [320.0, 400.0, 1200.0]) {
+    testWidgets('Navbar displays the BK logo at width $width', (tester) async {
+      tester.view.physicalSize = Size(width, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.themeData,
+          home: Scaffold(appBar: NavBar(onSectionTap: (_) {})),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final logo = tester.widget<Image>(find.byType(Image));
+      expect((logo.image as AssetImage).assetName, 'web/icons/BK-logo.png');
+      expect(logo.fit, BoxFit.contain);
+      expect(logo.excludeFromSemantics, isTrue);
+      expect(find.text(PortfolioData.name), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('Section margins increase on mobile only', (
     WidgetTester tester,
   ) async {
@@ -51,7 +73,7 @@ void main() {
     expect(await leftMarginAt(1200), 24);
   });
 
-  testWidgets('Hero art ramps up initial characters before reaching its cap', (
+  testWidgets('Hero art starts initial characters at 21ms intervals', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(
@@ -67,11 +89,33 @@ void main() {
 
     expect(visibleCharacters(), 1);
     await tester.pump(const Duration(milliseconds: 73));
-    expect(visibleCharacters(), 7);
+    expect(visibleCharacters(), 4);
     await tester.pump(const Duration(milliseconds: 96));
-    expect(visibleCharacters(), 15);
+    expect(visibleCharacters(), 9);
     await tester.pump(const Duration(milliseconds: 12));
-    expect(visibleCharacters(), 15);
+    expect(visibleCharacters(), 9);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Hero art waits for a free concurrent scramble slot', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: HeroAsciiArt(maxConcurrentPerRow: 3)),
+      ),
+    );
+    final firstRow = find
+        .descendant(of: find.byType(HeroAsciiArt), matching: find.byType(Text))
+        .first;
+    int visibleCharacters() =>
+        tester.widget<Text>(firstRow).data!.replaceAll(' ', '').length;
+
+    await tester.pump(const Duration(milliseconds: 64));
+    expect(visibleCharacters(), 3);
+    // No character can lock and free a slot before 200ms.
+    await tester.pump(const Duration(milliseconds: 126));
+    expect(visibleCharacters(), 3);
     expect(tester.takeException(), isNull);
   });
 
@@ -99,12 +143,12 @@ void main() {
       expect(row(0)[1], ' ');
       expect(row(1).trim(), isEmpty);
 
-      await tester.pump(const Duration(milliseconds: 55));
+      await tester.pump(const Duration(milliseconds: 80));
       expect(row(1)[0], isNot(' '));
       expect(row(1)[1], ' ');
       expect(row(2).trim(), isEmpty);
 
-      await tester.pump(const Duration(milliseconds: 55));
+      await tester.pump(const Duration(milliseconds: 80));
       expect(row(2)[0], isNot(' '));
       expect(row(3).trim(), isEmpty);
       expect(tester.takeException(), isNull);
@@ -671,17 +715,32 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(
-      const MaterialApp(home: Scaffold(body: FeaturedWorkSection())),
+      const MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(child: FeaturedWorkSection()),
+        ),
+      ),
     );
 
     final cards = find.byType(ProjectCard);
-    expect(cards, findsNWidgets(3));
+    expect(cards, findsNWidgets(PortfolioData.projects.length));
     expect(
         tester.getTopLeft(cards.at(0)).dy, tester.getTopLeft(cards.at(1)).dy);
     expect(
       tester.getTopLeft(cards.at(2)).dy,
       greaterThan(tester.getTopLeft(cards.at(1)).dy),
     );
+    expect(
+        tester.getTopLeft(cards.at(2)).dy, tester.getTopLeft(cards.at(3)).dy);
+    expect(tester.getTopLeft(cards.at(1)).dx,
+        greaterThan(tester.getTopLeft(cards.at(0)).dx));
+    expect(tester.getTopLeft(cards.at(3)).dx,
+        greaterThan(tester.getTopLeft(cards.at(2)).dx));
+    expect(tester.getTopLeft(cards.at(4)).dy,
+        greaterThan(tester.getTopLeft(cards.at(3)).dy));
+    expect(tester.getTopLeft(cards.at(4)).dx,
+        tester.getTopLeft(cards.at(0)).dx);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('Home page renders hero and section titles', (
@@ -693,9 +752,9 @@ void main() {
     expect(find.byType(HeroAsciiArt), findsOneWidget);
     expect(find.text('Featured Work.'), findsOneWidget);
     expect(find.text('About.'), findsOneWidget);
-    expect(find.text('Experience.'), findsOneWidget);
-    expect(find.text('Skills.'), findsOneWidget);
-    expect(find.text('Contact.'), findsOneWidget);
-    expect(find.byType(ProjectCard), findsNWidgets(3));
+    expect(find.byType(FooterSection), findsOneWidget);
+    expect(find.byType(ProjectCard),
+        findsNWidgets(PortfolioData.projects.length));
+    expect(tester.takeException(), isNull);
   });
 }
