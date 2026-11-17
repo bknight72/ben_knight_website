@@ -1142,6 +1142,8 @@ void main() {
       await _page(tester, repository, openEditor: false);
       Rect bar(String id) =>
           tester.getRect(find.byKey(ValueKey('sankey-bar-$id')));
+      final compact = width == 360;
+      final gap = compact ? 5 : 8;
       for (final id in [
         'deposit-ungrouped',
         'income',
@@ -1152,7 +1154,7 @@ void main() {
         'ungrouped'
       ]) {
         final rect = bar(id);
-        expect(rect.width, 19);
+        expect(rect.width, compact ? 10 : 19);
         expect(rect.height, greaterThan(0));
         final decoration = tester
             .widget<DecoratedBox>(find
@@ -1162,7 +1164,10 @@ void main() {
                 .last)
             .decoration as BoxDecoration;
         expect(decoration.border, isNull);
-        final label = tester.getRect(find.byKey(ValueKey('sankey-label-$id')));
+        final labelFinder = find.byKey(ValueKey('sankey-label-$id'));
+        expect(tester.widget<Text>(labelFinder).style!.fontSize,
+            compact ? 10 : 12);
+        final label = tester.getRect(labelFinder);
         if (id == 'group:child' || id == 'direct:root') {
           expect(label.right, lessThan(rect.left));
         } else {
@@ -1181,6 +1186,8 @@ void main() {
         final percentage =
             find.byKey(ValueKey('sankey-percentage-${entry.key}'));
         expect(tester.widget<Text>(percentage).data, entry.value);
+        expect(
+            tester.widget<Text>(percentage).style!.fontSize, compact ? 9 : 11);
         final name =
             tester.getRect(find.byKey(ValueKey('sankey-label-${entry.key}')));
         expect(
@@ -1198,10 +1205,11 @@ void main() {
       expect(
           bar('deposit-ungrouped').height, closeTo(bar('income').height, .01));
       expect(
-          bar('group:other').top - bar('group:root').bottom, closeTo(8, .01));
-      expect(bar('ungrouped').top - bar('group:other').bottom, closeTo(8, .01));
+          bar('group:other').top - bar('group:root').bottom, closeTo(gap, .01));
       expect(
-          bar('group:child').top - bar('direct:root').bottom, closeTo(8, .01));
+          bar('ungrouped').top - bar('group:other').bottom, closeTo(gap, .01));
+      expect(bar('group:child').top - bar('direct:root').bottom,
+          closeTo(gap, .01));
       expect(bar('group:root').height / bar('group:other').height,
           closeTo(3, .001));
       expect(bar('income').height / bar('group:root').height,
@@ -1295,7 +1303,12 @@ void main() {
                 of: _towerPanel(), matching: find.text('Tower of Money')),
             findsNothing);
         expect(find.text('Funded in order'), findsNothing);
-        expect(diagram.height, greaterThan(card.height / 2));
+        if (width == 360) {
+          expect(card.height, lessThan(700));
+          expect(diagram.height, inInclusiveRange(250, 350));
+        } else {
+          expect(diagram.height, greaterThan(card.height / 2));
+        }
         expect(find.text(r'$10.00 capacity'), findsNothing);
         expect(diagram.top, closeTo(card.top, .01));
         expect(tester.widget(_towerPanel()), isA<Column>());
@@ -1312,7 +1325,8 @@ void main() {
           'income',
           for (var i = 0; i < depth; i++) 'group:level-$i',
         ];
-        final step = (diagram.width - 19) / (columnCount - 1);
+        final step =
+            (diagram.width - (width == 360 ? 10 : 19)) / (columnCount - 1);
         for (var i = 0; i < ids.length; i++) {
           final bar =
               tester.getRect(find.byKey(ValueKey('sankey-bar-${ids[i]}')));
@@ -1395,7 +1409,7 @@ void main() {
             tester.getRect(find.byKey(ValueKey('sankey-label-group:tiny-$i')));
         expect(after.top, greaterThanOrEqualTo(before.bottom));
         expect(node('group:tiny-$i').top - node('group:tiny-${i - 1}').bottom,
-            greaterThanOrEqualTo(8));
+            greaterThanOrEqualTo((width == 360 ? 5 : 8) - .001));
       }
       expect(state.allocation.remaining, 99970);
       expect(tester.takeException(), isNull);

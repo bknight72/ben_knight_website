@@ -479,15 +479,13 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                         onPressed: _load, child: const Text('Reload plan')),
                 ]))
               : LayoutBuilder(builder: (context, tower) {
-                  if (tower.maxHeight >= 600 && tower.maxWidth >= 650) {
+                  final compact = tower.maxWidth < 650;
+                  if (!compact && tower.maxHeight >= 600) {
                     return _funding();
                   }
                   return SingleChildScrollView(
                       child: SizedBox(
-                    height:
-                        tower.maxHeight < (tower.maxWidth >= 650 ? 600 : 920)
-                            ? (tower.maxWidth >= 650 ? 600 : 920)
-                            : tower.maxHeight,
+                    height: compact ? 640 : 600,
                     child: _funding(),
                   ));
                 }),
@@ -656,9 +654,20 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
 
   Widget _fundingDiagram(BudgeteerAllocation allocation) =>
       LayoutBuilder(builder: (context, constraints) {
-        const barWidth = 19.0;
-        const gap = 8.0;
-        const labelHeight = 38.0;
+        final compact = constraints.maxWidth < 650;
+        final barWidth = compact ? 10.0 : 19.0;
+        final gap = compact ? 5.0 : 8.0;
+        final nameSize = compact ? 10.0 : 12.0;
+        final percentageSize = compact ? 9.0 : 11.0;
+        final labelInset = compact ? 4.0 : 6.0;
+        final textScaler = MediaQuery.textScalerOf(context);
+        final scaledLabelHeight =
+            (textScaler.scale(nameSize) + textScaler.scale(percentageSize)) *
+                1.4;
+        final baseLabelHeight = compact ? 28.0 : 38.0;
+        final labelHeight = scaledLabelHeight > baseLabelHeight
+            ? scaledLabelHeight
+            : baseLabelHeight;
         const overflowColor = BudgetColors.deficit;
         final plannedFlows = <({String source, String target, int amount})>[];
         void flow(String source, String target, int amount) {
@@ -815,7 +824,8 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
         final step =
             (constraints.maxWidth - barWidth).clamp(0.0, double.infinity) /
                 (columns.length - 1);
-        final labelWidth = (step - barWidth - 14).clamp(0.0, double.infinity);
+        final labelWidth =
+            (step - barWidth - 2 * labelInset - 2).clamp(0.0, double.infinity);
         final nodes = <Widget>[];
         final positions = <String, Offset>{};
         final colors = <String, Color>{};
@@ -870,7 +880,9 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                                             ? Border.all(color: _ink, width: 3)
                                             : null))))))));
             nodes.add(Positioned(
-                left: lastColumn ? left - labelWidth - 6 : left + barWidth + 6,
+                left: lastColumn
+                    ? left - labelWidth - labelInset
+                    : left + barWidth + labelInset,
                 top: labelTop,
                 width: labelWidth,
                 height: labelHeight,
@@ -890,14 +902,15 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
                                       color: node.color,
-                                      fontSize: 12,
+                                      fontSize: nameSize,
                                       fontWeight: FontWeight.w700)),
                               Text(percentage,
                                   key: ValueKey('sankey-percentage-${node.id}'),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
-                                      color: node.color, fontSize: 11)),
+                                      color: node.color,
+                                      fontSize: percentageSize)),
                             ])))));
           }
         }

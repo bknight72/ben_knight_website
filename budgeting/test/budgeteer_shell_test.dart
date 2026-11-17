@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:private_budgeting/app.dart';
+import 'package:private_budgeting/app_theme.dart';
 import 'package:private_budgeting/budgeteer_domain.dart';
 import 'package:private_budgeting/domain.dart';
 import 'workspace_test.dart' show FixtureRepository;
@@ -28,6 +29,63 @@ class PlanningRepository extends FixtureRepository {
 }
 
 void main() {
+  testWidgets('mobile menu exposes all drawer items without scrolling',
+      (tester) async {
+    tester.view.physicalSize = const Size(360, 568);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = PlanningRepository();
+    addTearDown(repository.client.dispose);
+    var signOuts = 0;
+    await tester.pumpWidget(MaterialApp(
+        theme: BudgetTheme.data,
+        home: LedgerShell(
+            repository: repository,
+            onLogout: () async {
+              signOuts++;
+            })));
+    await tester.pumpAndSettle();
+
+    final menu = find.byTooltip('Open navigation menu');
+    final appBar = find.byType(AppBar);
+    expect(tester.widget<AppBar>(appBar).title, isNull);
+    expect(find.byIcon(Icons.logout).hitTestable(), findsNothing);
+    final menuIcon =
+        find.descendant(of: appBar, matching: find.byIcon(Icons.menu));
+    expect(IconTheme.of(tester.element(menuIcon)).color, BudgetColors.leaf);
+
+    await tester.tap(menu);
+    await tester.pumpAndSettle();
+    final drawer = find.byType(Drawer);
+    expect(find.text('Just your eyes.'), findsNothing);
+    expect(find.byKey(const ValueKey('sidebar-logo')).hitTestable(),
+        findsOneWidget);
+    expect(find.byTooltip(RegExp('Choose reporting month:')).hitTestable(),
+        findsOneWidget);
+    for (final page in [
+      'Overview',
+      'Accounts',
+      'Transactions',
+      'Group manager',
+      'Import & export',
+      'Budgeteer',
+      'Sign out',
+    ]) {
+      expect(
+          find.descendant(of: drawer, matching: find.text(page)).hitTestable(),
+          findsOneWidget);
+    }
+    expect(find.byIcon(Icons.logout), findsOneWidget);
+    await tester.tap(find.text('Sign out'));
+    expect(signOuts, 1);
+    await tester.tap(find.text('Budgeteer'));
+    await tester.pumpAndSettle();
+    expect(find.text('Tower of Money'), findsOneWidget);
+    expect(find.byIcon(Icons.logout).hitTestable(), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('Budgeteer navigation reloads persisted month state',
       (tester) async {
     tester.view.physicalSize = const Size(1440, 1100);
@@ -39,6 +97,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(
         home: LedgerShell(repository: repository, onLogout: () async {})));
     await tester.pumpAndSettle();
+    expect(find.text('Just your eyes.'), findsOneWidget);
     await tester.tap(find.text('Budgeteer'));
     await tester.pumpAndSettle();
     expect(find.text('Tower of Money'), findsOneWidget);

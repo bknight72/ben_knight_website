@@ -903,8 +903,11 @@ class _LedgerShellState extends State<LedgerShell> {
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
                                 Padding(
-                                    padding: const EdgeInsets.fromLTRB(
-                                        18, 38, 18, 42),
+                                    padding: wide
+                                        ? const EdgeInsets.fromLTRB(
+                                            18, 38, 18, 42)
+                                        : const EdgeInsets.fromLTRB(
+                                            18, 12, 18, 12),
                                     child: Row(children: [
                                       Image.asset('web/icons/BigB-logo.png',
                                           key: const ValueKey('sidebar-logo'),
@@ -994,45 +997,50 @@ class _LedgerShellState extends State<LedgerShell> {
                               if (!wide) Navigator.pop(context);
                             },
                           )),
-              const SizedBox(height: 36),
-              ClipRect(
-                  child: OverflowBox(
-                      fit: OverflowBoxFit.deferToChild,
-                      minWidth: wide ? 242 : 304,
-                      maxWidth: wide ? 242 : 304,
-                      alignment: Alignment.centerLeft,
-                      child: SizedBox(
-                          width: wide ? 242 : 304,
-                          child: Visibility(
-                              visible: !collapsed,
-                              maintainSize: true,
-                              maintainAnimation: true,
-                              maintainState: true,
-                              child: Container(
-                                  margin: const EdgeInsets.all(22),
-                                  padding: const EdgeInsets.all(16),
-                                  decoration: BoxDecoration(
-                                      border: Border.all(
-                                          color: BudgetColors.darkBorder),
-                                      borderRadius: BorderRadius.circular(12)),
-                                  child: const Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Icon(Icons.shield_outlined,
-                                            color: BudgetColors.darkHighlight),
-                                        SizedBox(height: 10),
-                                        Text('Just your eyes.',
-                                            style: TextStyle(
-                                                color: BudgetColors.onDark,
-                                                fontWeight: FontWeight.bold)),
-                                        SizedBox(height: 6),
-                                        Text(
-                                            'MFA protected. No offline financial storage.',
-                                            style: TextStyle(
-                                                color: BudgetColors.onDarkMuted,
-                                                fontSize: 12)),
-                                      ])))))),
+              if (wide) ...[
+                const SizedBox(height: 36),
+                ClipRect(
+                    child: OverflowBox(
+                        fit: OverflowBoxFit.deferToChild,
+                        minWidth: 242,
+                        maxWidth: 242,
+                        alignment: Alignment.centerLeft,
+                        child: SizedBox(
+                            width: 242,
+                            child: Visibility(
+                                visible: !collapsed,
+                                maintainSize: true,
+                                maintainAnimation: true,
+                                maintainState: true,
+                                child: Container(
+                                    margin: const EdgeInsets.all(22),
+                                    padding: const EdgeInsets.all(16),
+                                    decoration: BoxDecoration(
+                                        border: Border.all(
+                                            color: BudgetColors.darkBorder),
+                                        borderRadius:
+                                            BorderRadius.circular(12)),
+                                    child: const Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Icon(Icons.shield_outlined,
+                                              color:
+                                                  BudgetColors.darkHighlight),
+                                          SizedBox(height: 10),
+                                          Text('Just your eyes.',
+                                              style: TextStyle(
+                                                  color: BudgetColors.onDark,
+                                                  fontWeight: FontWeight.bold)),
+                                          SizedBox(height: 6),
+                                          Text(
+                                              'MFA protected. No offline financial storage.',
+                                              style: TextStyle(
+                                                  color:
+                                                      BudgetColors.onDarkMuted,
+                                                  fontSize: 12)),
+                                        ])))))),
+              ],
               if (collapsed)
                 SizedBox(
                     height: 56,
@@ -1053,21 +1061,18 @@ class _LedgerShellState extends State<LedgerShell> {
                     title: const Text('Sign out',
                         style: TextStyle(color: BudgetColors.onDarkMuted)),
                     onTap: widget.onLogout),
-              const SizedBox(height: 20),
+              if (wide) const SizedBox(height: 20),
             ]));
         return Scaffold(
-          drawer: wide ? null : Drawer(backgroundColor: ink, child: navigation),
+          drawer: wide
+              ? null
+              : Drawer(
+                  backgroundColor: ink, child: SafeArea(child: navigation)),
           appBar: wide
               ? null
               : AppBar(
-                  title: const Brand(light: true),
                   backgroundColor: canvas,
-                  actions: [
-                      IconButton(
-                          tooltip: 'Sign out',
-                          onPressed: widget.onLogout,
-                          icon: const Icon(Icons.logout))
-                    ]),
+                  iconTheme: const IconThemeData(color: BudgetColors.leaf)),
           body: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             if (wide)
               SizedBox(
