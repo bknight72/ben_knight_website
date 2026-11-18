@@ -7,6 +7,9 @@ import 'package:private_budgeting/domain.dart';
 import 'workspace_test.dart' show FixtureRepository;
 
 class PlanningRepository extends FixtureRepository {
+  PlanningRepository({this.state = const BudgeteerState(groupsRevision: 7)});
+
+  final BudgeteerState state;
   int reads = 0;
   int inclusions = 0;
   final months = <String>[];
@@ -17,18 +20,106 @@ class PlanningRepository extends FixtureRepository {
     expect(operation, 'sources_include');
     expect(groupsRevision, 7);
     inclusions++;
-    return const BudgeteerState(groupsRevision: 7);
+    return state;
   }
 
   @override
   Future<BudgeteerState> budgeteerRead(String month) async {
     reads++;
     months.add(month);
-    return const BudgeteerState(groupsRevision: 7);
+    return state;
   }
 }
 
 void main() {
+  testWidgets('mobile toolbar stays fixed as dense Tower content scrolls',
+      (tester) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = PlanningRepository(
+        state: BudgeteerState(
+      groupsRevision: 7,
+      plan: const {'id': 'plan', 'revision': 1},
+      groups: [
+        for (var i = 0; i < 24; i++)
+          {'id': 'group-$i', 'name': 'Group $i', 'sort_position': i},
+      ],
+      entries: [
+        const {
+          'id': 'income',
+          'name': 'Income',
+          'kind': 'deposit',
+          'amount_minor': 100000,
+        },
+        for (var i = 0; i < 24; i++)
+          {
+            'id': 'bill-$i',
+            'name': 'Bill $i',
+            'kind': 'withdrawal',
+            'group_id': 'group-$i',
+            'amount_minor': 100,
+          },
+      ],
+    ));
+    addTearDown(repository.client.dispose);
+    await tester.pumpWidget(MaterialApp(
+        theme: BudgetTheme.data,
+        builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: TextScaler.linear(1.3)),
+            child: child!),
+        home: LedgerShell(repository: repository, onLogout: () async {})));
+    await tester.pumpAndSettle();
+
+    final menu = find.byTooltip('Open navigation menu');
+    await tester.tap(menu);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Budgeteer'));
+    await tester.pumpAndSettle();
+
+    final tabs = find.byType(SegmentedButton<int>);
+    final appBar = find.byType(AppBar);
+    expect(tabs, findsOneWidget);
+    expect(find.descendant(of: appBar, matching: tabs), findsOneWidget);
+    final tabsRect = tester.getRect(tabs);
+    expect(tabsRect.left, greaterThan(tester.getCenter(menu).dx));
+    expect(tabsRect.center.dy, closeTo(tester.getCenter(menu).dy, 1));
+    expect(tabsRect.right, lessThanOrEqualTo(320));
+
+    final diagram = find.byKey(const ValueKey('sankey-diagram'));
+    final pooled = find.text('Pooled deposits');
+    expect(find.ancestor(of: diagram, matching: find.byType(Scrollable)),
+        findsOneWidget);
+    final chart = tester.getRect(diagram);
+    final totals = tester.getRect(pooled);
+    expect(chart.height, greaterThan(568));
+    await tester.dragFrom(
+        Offset(chart.center.dx, chart.top + 160), const Offset(0, -230));
+    await tester.pumpAndSettle();
+    final distance = chart.top - tester.getTopLeft(diagram).dy;
+    expect(distance, greaterThan(0));
+    expect(tester.getTopLeft(pooled).dy, closeTo(totals.top - distance, .01));
+    expect(tester.getRect(tabs), tabsRect);
+    await tester.ensureVisible(find.text('Remaining'));
+    await tester.pumpAndSettle();
+    expect(find.text('Remaining').hitTestable(), findsOneWidget);
+
+    final group = find.byKey(const ValueKey('sankey-label-group:group-0'));
+    await tester.ensureVisible(group);
+    await tester.pumpAndSettle();
+    await tester.tap(group);
+    await tester.pumpAndSettle();
+    expect(tester.widget<SegmentedButton<int>>(tabs).selected, {1});
+    expect(find.text('Add withdrawal'), findsOneWidget);
+    await tester
+        .tap(find.descendant(of: appBar, matching: find.text('Deposits')));
+    await tester.pumpAndSettle();
+    expect(find.text('Add deposit'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('mobile menu exposes all drawer items without scrolling',
       (tester) async {
     tester.view.physicalSize = const Size(360, 568);

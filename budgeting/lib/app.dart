@@ -701,6 +701,15 @@ class LedgerShell extends StatefulWidget {
 
 class _LedgerShellState extends State<LedgerShell> {
   int page = 0;
+  int _budgeteerTab = 0;
+
+  void _selectPage(int nextPage) => setState(() {
+        if (nextPage != page) _budgeteerTab = 0;
+        page = nextPage;
+      });
+
+  void _selectBudgeteerTab(int tab) => setState(() => _budgeteerTab = tab);
+
   bool _sidebarCollapsed = false;
   bool loading = true;
   bool working = false;
@@ -868,6 +877,7 @@ class _LedgerShellState extends State<LedgerShell> {
   Widget build(BuildContext context) => LayoutBuilder(builder: (context, size) {
         final wide = size.maxWidth >= 1000;
         final collapsed = wide && _sidebarCollapsed;
+        final mobileBudgeteer = !wide && page == 5 && !loading && error == null;
         final footer = Text(
             'USD only  /  $timezone  /  Posted activity  /  No rollover\nBank transaction dates use provider calendar dates; balances reflect their observation date.',
             style: const TextStyle(fontSize: 11, color: muted));
@@ -969,7 +979,7 @@ class _LedgerShellState extends State<LedgerShell> {
                                     foregroundColor: page == i
                                         ? BudgetColors.darkHighlight
                                         : BudgetColors.onDarkMuted),
-                                onPressed: () => setState(() => page = i),
+                                onPressed: () => _selectPage(i),
                                 icon: Icon(icons[i])))
                         : ListTile(
                             contentPadding:
@@ -993,7 +1003,7 @@ class _LedgerShellState extends State<LedgerShell> {
                                         : BudgetColors.onDarkMuted,
                                     fontSize: 14)),
                             onTap: () {
-                              setState(() => page = i);
+                              _selectPage(i);
                               if (!wide) Navigator.pop(context);
                             },
                           )),
@@ -1072,7 +1082,20 @@ class _LedgerShellState extends State<LedgerShell> {
               ? null
               : AppBar(
                   backgroundColor: canvas,
-                  iconTheme: const IconThemeData(color: BudgetColors.leaf)),
+                  iconTheme: const IconThemeData(color: BudgetColors.leaf),
+                  titleSpacing: mobileBudgeteer ? 0 : null,
+                  toolbarHeight: mobileBudgeteer
+                      ? (MediaQuery.textScalerOf(context).scale(14) * 3.6 + 6)
+                          .clamp(kToolbarHeight, double.infinity)
+                      : null,
+                  title: mobileBudgeteer
+                      ? Padding(
+                          padding: const EdgeInsets.only(right: 12),
+                          child: BudgeteerSelector(
+                              selected: _budgeteerTab,
+                              onChanged: _selectBudgeteerTab,
+                              compact: true))
+                      : null),
           body: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             if (wide)
               SizedBox(
@@ -1097,6 +1120,9 @@ class _LedgerShellState extends State<LedgerShell> {
                                   repository: repo,
                                   month: month,
                                   transactions: transactions,
+                                  mobileToolbar: mobileBudgeteer,
+                                  selectedTab: _budgeteerTab,
+                                  onTabChanged: _selectBudgeteerTab,
                                   toolbar: working
                                       ? const LinearProgressIndicator()
                                       : null,
@@ -1274,8 +1300,11 @@ class _LedgerShellState extends State<LedgerShell> {
                   ],
                 )));
     if (date != null && mounted) {
-      setState(() =>
-          month = '${date.year}-${date.month.toString().padLeft(2, '0')}');
+      final nextMonth = '${date.year}-${date.month.toString().padLeft(2, '0')}';
+      setState(() {
+        if (nextMonth != month) _budgeteerTab = 0;
+        month = nextMonth;
+      });
     }
   }
 

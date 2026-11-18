@@ -20,6 +20,52 @@ const _palette = <String, Color>{
   'slate': BudgetColors.groupSlate,
 };
 
+class BudgeteerSelector extends StatelessWidget {
+  const BudgeteerSelector({
+    super.key,
+    required this.selected,
+    required this.onChanged,
+    this.showIcons = false,
+    this.compact = false,
+  });
+
+  final int selected;
+  final ValueChanged<int> onChanged;
+  final bool showIcons;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) => SegmentedButton<int>(
+        style: ButtonStyle(
+          foregroundColor: const WidgetStatePropertyAll(BudgetColors.onPrimary),
+          backgroundColor: WidgetStateProperty.resolveWith(
+              (states) => states.contains(WidgetState.selected) ? _teal : _ink),
+          padding: compact
+              ? const WidgetStatePropertyAll(
+                  EdgeInsets.symmetric(horizontal: 4))
+              : null,
+          visualDensity: compact ? VisualDensity.compact : null,
+        ),
+        showSelectedIcon: showIcons,
+        segments: [
+          ButtonSegment(
+              value: 0,
+              label: const Text('Tower of Money', textAlign: TextAlign.center),
+              icon: showIcons ? const Icon(Icons.account_tree_outlined) : null),
+          ButtonSegment(
+              value: 1,
+              label: const Text('Withdrawals', textAlign: TextAlign.center),
+              icon: showIcons ? const Icon(Icons.view_list_outlined) : null),
+          ButtonSegment(
+              value: 2,
+              label: const Text('Deposits', textAlign: TextAlign.center),
+              icon: showIcons ? const Icon(Icons.savings_outlined) : null),
+        ],
+        selected: {selected},
+        onSelectionChanged: (value) => onChanged(value.single),
+      );
+}
+
 /// A server-backed planning workspace. Bank sources are always read-only.
 class BudgeteerPage extends StatefulWidget {
   final LedgerRepository repository;
@@ -28,6 +74,9 @@ class BudgeteerPage extends StatefulWidget {
   final Widget? toolbar;
   final Widget? footer;
   final bool groupsOnly;
+  final bool mobileToolbar;
+  final int? selectedTab;
+  final ValueChanged<int>? onTabChanged;
 
   const BudgeteerPage({
     super.key,
@@ -37,6 +86,9 @@ class BudgeteerPage extends StatefulWidget {
     this.toolbar,
     this.footer,
     this.groupsOnly = false,
+    this.mobileToolbar = false,
+    this.selectedTab,
+    this.onTabChanged,
   });
 
   @override
@@ -56,7 +108,19 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
   final _contentScroll = ScrollController();
   final _contentKey = GlobalKey();
   GlobalKey? _selectedGroup;
-  int _tab = 0;
+  int _localTab = 0;
+  int get _tab => widget.selectedTab ?? _localTab;
+
+  void _selectTab(int tab) {
+    if (_tab == tab) return;
+    final onChanged = widget.onTabChanged;
+    if (onChanged != null) {
+      onChanged(tab);
+    } else {
+      setState(() => _localTab = tab);
+    }
+  }
+
   String? _retryOperation;
   Json? _retryPayload;
   int _generation = 0;
@@ -432,39 +496,13 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
           widget.toolbar!,
           const SizedBox(height: 12),
         ],
-        SegmentedButton<int>(
-          style: ButtonStyle(
-            foregroundColor:
-                const WidgetStatePropertyAll(BudgetColors.onPrimary),
-            backgroundColor: WidgetStateProperty.resolveWith((states) =>
-                states.contains(WidgetState.selected) ? _teal : _ink),
-          ),
-          showSelectedIcon: constraints.maxWidth >= 560,
-          segments: [
-            ButtonSegment(
-                value: 0,
-                label:
-                    const Text('Tower of Money', textAlign: TextAlign.center),
-                icon: constraints.maxWidth >= 560
-                    ? const Icon(Icons.account_tree_outlined)
-                    : null),
-            ButtonSegment(
-                value: 1,
-                label: const Text('Withdrawals', textAlign: TextAlign.center),
-                icon: constraints.maxWidth >= 560
-                    ? const Icon(Icons.view_list_outlined)
-                    : null),
-            ButtonSegment(
-                value: 2,
-                label: const Text('Deposits'),
-                icon: constraints.maxWidth >= 560
-                    ? const Icon(Icons.savings_outlined)
-                    : null),
-          ],
-          selected: {_tab},
-          onSelectionChanged: (value) => setState(() => _tab = value.single),
-        ),
-        const SizedBox(height: 12),
+        if (!widget.mobileToolbar) ...[
+          BudgeteerSelector(
+              selected: _tab,
+              onChanged: _selectTab,
+              showIcons: constraints.maxWidth >= 560),
+          const SizedBox(height: 12),
+        ],
         Expanded(
             child:
                 IndexedStack(index: _tab, sizing: StackFit.expand, children: [
@@ -479,6 +517,13 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                         onPressed: _load, child: const Text('Reload plan')),
                 ]))
               : LayoutBuilder(builder: (context, tower) {
+                  if (widget.mobileToolbar) {
+                    return SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        child: _funding(
+                            pageChartHeight:
+                                (tower.maxHeight - 220).clamp(260.0, 540.0)));
+                  }
                   final compact = tower.maxWidth < 650;
                   if (!compact && tower.maxHeight >= 600) {
                     return _funding();
@@ -582,10 +627,8 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
   void _scrollToGroup(Object? id) {
     final path = id == null ? [null] : _state.pathOf(id).map(_id).toList();
     if (_tab != 1 || path.any(_collapsedGroups.contains)) {
-      setState(() {
-        _tab = 1;
-        _collapsedGroups.removeAll(path);
-      });
+      setState(() => _collapsedGroups.removeAll(path));
+      _selectTab(1);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _scrollToGroup(id);
       });
@@ -614,20 +657,20 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
         curve: Curves.easeInOut);
   }
 
-  Widget _funding() {
+  Widget _funding({double? pageChartHeight}) {
     final allocation = _state.allocation;
     final capacity = allocation.deposits;
     final bar = Semantics(
       label: 'Funding bar. ${money(capacity)} deposited. '
           '${money(allocation.remaining)} remaining. '
           '${money(allocation.deficit)} unfunded.',
-      child: _fundingDiagram(allocation),
+      child: _fundingDiagram(allocation, pageChartHeight: pageChartHeight),
     );
     return Column(
       key: const ValueKey('tower-of-money-card'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(child: bar),
+        if (pageChartHeight == null) Expanded(child: bar) else bar,
         const SizedBox(height: 16),
         LayoutBuilder(builder: (context, constraints) {
           final allocation = _state.allocation;
@@ -652,8 +695,10 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
     );
   }
 
-  Widget _fundingDiagram(BudgeteerAllocation allocation) =>
+  Widget _fundingDiagram(BudgeteerAllocation allocation,
+          {double? pageChartHeight}) =>
       LayoutBuilder(builder: (context, constraints) {
+        final viewportHeight = pageChartHeight ?? constraints.maxHeight;
         final compact = constraints.maxWidth < 650;
         final barWidth = compact ? 10.0 : 19.0;
         final gap = compact ? 5.0 : 8.0;
@@ -661,9 +706,22 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
         final percentageSize = compact ? 9.0 : 11.0;
         final labelInset = compact ? 4.0 : 6.0;
         final textScaler = MediaQuery.textScalerOf(context);
+        final nameStyle =
+            TextStyle(fontSize: nameSize, fontWeight: FontWeight.w700);
+        final percentageStyle = TextStyle(fontSize: percentageSize);
+        final inheritedStyle = DefaultTextStyle.of(context).style;
+        double lineHeight(TextStyle style) {
+          final painter = TextPainter(
+              text: TextSpan(style: inheritedStyle.merge(style)),
+              textDirection: Directionality.of(context),
+              textScaler: textScaler);
+          final height = painter.preferredLineHeight.ceilToDouble();
+          painter.dispose();
+          return height;
+        }
+
         final scaledLabelHeight =
-            (textScaler.scale(nameSize) + textScaler.scale(percentageSize)) *
-                1.4;
+            lineHeight(nameStyle) + lineHeight(percentageStyle);
         final baseLabelHeight = compact ? 28.0 : 38.0;
         final labelHeight = scaledLabelHeight > baseLabelHeight
             ? scaledLabelHeight
@@ -802,14 +860,14 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
 
         var scale = 0.0;
         if (total > 0) {
-          if (heightAt(0) >= constraints.maxHeight) {
+          if (heightAt(0) >= viewportHeight) {
             // Dense labels need scrolling, but monetary bar ratios stay exact.
             scale = 160 / total;
           } else {
-            var upper = constraints.maxHeight / total;
+            var upper = viewportHeight / total;
             for (var i = 0; i < 48; i++) {
               final candidate = (scale + upper) / 2;
-              if (heightAt(candidate) <= constraints.maxHeight) {
+              if (heightAt(candidate) <= viewportHeight) {
                 scale = candidate;
               } else {
                 upper = candidate;
@@ -818,9 +876,8 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
           }
         }
         final contentHeight = heightAt(scale);
-        final height = contentHeight > constraints.maxHeight
-            ? contentHeight
-            : constraints.maxHeight;
+        final height =
+            contentHeight > viewportHeight ? contentHeight : viewportHeight;
         final step =
             (constraints.maxWidth - barWidth).clamp(0.0, double.infinity) /
                 (columns.length - 1);
@@ -900,17 +957,13 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
                                   key: ValueKey('sankey-label-${node.id}'),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                      color: node.color,
-                                      fontSize: nameSize,
-                                      fontWeight: FontWeight.w700)),
+                                  style: nameStyle.copyWith(color: node.color)),
                               Text(percentage,
                                   key: ValueKey('sankey-percentage-${node.id}'),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                      color: node.color,
-                                      fontSize: percentageSize)),
+                                  style: percentageStyle.copyWith(
+                                      color: node.color)),
                             ])))));
           }
         }
@@ -943,14 +996,16 @@ class _BudgeteerPageState extends State<BudgeteerPage> {
           outputs[flow.source] = sourceCents + flow.amount;
           inputs[flow.target] = targetCents + flow.amount;
         }
-        return SingleChildScrollView(
-            child: SizedBox(
-                width: constraints.maxWidth,
-                height: height,
-                child: CustomPaint(
-                    key: const ValueKey('sankey-diagram'),
-                    painter: _FundingLinks(links),
-                    child: Stack(children: nodes))));
+        final diagram = SizedBox(
+            width: constraints.maxWidth,
+            height: height,
+            child: CustomPaint(
+                key: const ValueKey('sankey-diagram'),
+                painter: _FundingLinks(links),
+                child: Stack(children: nodes)));
+        return pageChartHeight == null
+            ? SingleChildScrollView(child: diagram)
+            : diagram;
       });
 
   Widget _withdrawals() => Column(
